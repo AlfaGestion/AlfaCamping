@@ -41,16 +41,23 @@ export async function initDb(db: SQLiteDatabase) {
     );`
   );
   const ingresosColumns: any = await db.getAllAsync("PRAGMA table_info(ingresos);");
-  const ingresosColumnNames = new Set(ingresosColumns.map((col: any) => col.name));
-  if (!ingresosColumnNames.has("estacionamiento")) {
-    await db.execAsync("ALTER TABLE ingresos ADD COLUMN estacionamiento INTEGER;");
-  }
-  if (!ingresosColumnNames.has("precio_estacionamiento")) {
-    await db.execAsync("ALTER TABLE ingresos ADD COLUMN precio_estacionamiento INTEGER;");
-  }
-  if (!ingresosColumnNames.has("hora_ingreso")) {
-    await db.execAsync("ALTER TABLE ingresos ADD COLUMN hora_ingreso TEXT;");
-  }
+  const ingresosColumnNames = new Set(
+    ingresosColumns.map((col: any) => String(col?.name))
+  );
+  const addIngresoColumnIfMissing = async (column: string, type: string) => {
+    if (ingresosColumnNames.has(column)) return;
+    try {
+      await db.execAsync(`ALTER TABLE ingresos ADD COLUMN ${column} ${type};`);
+    } catch (e: any) {
+      const msg = String(e?.message ?? e);
+      if (!/duplicate column name/i.test(msg)) {
+        throw e;
+      }
+    }
+  };
+  await addIngresoColumnIfMissing("estacionamiento", "INTEGER");
+  await addIngresoColumnIfMissing("precio_estacionamiento", "INTEGER");
+  await addIngresoColumnIfMissing("hora_ingreso", "TEXT");
 
   // 3. Tabla de Clientes
   await db.execAsync(
