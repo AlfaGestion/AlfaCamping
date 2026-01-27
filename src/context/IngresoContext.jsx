@@ -128,11 +128,12 @@ const IngresoContextProvider = ({ children }) => {
   const [mediosDePago, setMediosDePago] = useState([])
 
   const fetchPrecios = async () => {
+    if (!netInfo.isConnected) return;
     try {
       const data = await fetchDataFromApi('ingresos/precios');
       //console.log(data.data)  //25-01-2026
       
-      if (netInfo.isConnected && data.data) {
+      if (data?.data) {
         // 1. Enviamos los datos para que SQLite decida qué actualizar
         await preciosDb.upsertPrecios(data.data);
 
@@ -146,9 +147,10 @@ const IngresoContextProvider = ({ children }) => {
   };
 
   const fetchMediosDePago = async () => {
+    if (!netInfo.isConnected) return;
     const data = await fetchDataFromApi('ingresos/medios_de_pago')
 
-    if (netInfo.isConnected) {
+    if (data?.data) {
       await mediosDePagoDb.deleteAll()
       await mediosDePagoDb.createOrUpdate(data.data)
 
