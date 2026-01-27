@@ -302,7 +302,7 @@ export default function New() {
             </View>
 
             <View style={styles.inputGroup}>
-              <Text style={newTaskStyles.label}>TelÃ©fono</Text>
+              <Text style={newTaskStyles.label}>Telefono</Text>
               <TextInput
                 value={ingreso?.telefono}
                 onChangeText={(t) => setIngreso({ ...ingreso, telefono: t })}

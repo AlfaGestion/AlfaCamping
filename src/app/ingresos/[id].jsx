@@ -368,12 +368,12 @@ export default function New() {
         </View>
 
         <View style={[newTaskStyles.element]}>
-          <Text style={[newTaskStyles.label]}>TelÃƒÂ©fono</Text>
+          <Text style={[newTaskStyles.label]}>Telefono</Text>
           <TextInput
             value={ingreso?.telefono}
             onChangeText={(text) => setIngreso({ ...ingreso, telefono: text })}
             style={[newTaskStyles.textInput]}
-            placeholder="TelÃƒÂ©fono"
+            placeholder="Telefono"
             key={telefonoRefresh}
             ref={telefonoRef}
             onSubmitEditing={handleTelefonoSubmit}

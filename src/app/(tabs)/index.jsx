@@ -110,7 +110,7 @@ export default function Index() {
             {/* ------------------- FILTROS DE ESTADO ------------------- */}
             <View style={styles.containerFilters}>
 
-                {/* Botón: PENDIENTES_EGRESO (egresar: 0) */}
+                {/* Bot??n: PENDIENTES_EGRESO (egresar: 0) */}
                 <TouchableOpacity
                     onPress={() => setSelectedFilter(FILTERS.PENDIENTES_EGRESO)}
                     style={[
@@ -123,7 +123,7 @@ export default function Index() {
                     </Text>
                 </TouchableOpacity>
 
-                {/* Botón: PENDIENTES_SYNC (sincronizado: 0) */}
+                {/* Bot??n: PENDIENTES_SYNC (sincronizado: 0) */}
                 <TouchableOpacity
                     onPress={() => setSelectedFilter(FILTERS.PENDIENTES_SYNC)}
                     style={[
@@ -136,20 +136,7 @@ export default function Index() {
                     </Text>
                 </TouchableOpacity>
 
-                {/* Botón: COMPLETOS (egresar: 1 Y sincronizado: 1) */}
-                <TouchableOpacity
-                    onPress={() => setSelectedFilter(FILTERS.COMPLETOS)}
-                    style={[
-                        styles.filterButton,
-                        selectedFilter === FILTERS.COMPLETOS && styles.filterButtonActive
-                    ]}
-                >
-                    <Text style={selectedFilter === FILTERS.COMPLETOS ? styles.filterTextActive : styles.filterText}>
-                        Completos
-                    </Text>
-                </TouchableOpacity>
-
-                {/* Botón: TODOS */}
+                {/* Bot??n: TODOS */}
                 <TouchableOpacity
                     onPress={() => setSelectedFilter(FILTERS.TODOS)}
                     style={[
@@ -161,8 +148,23 @@ export default function Index() {
                         Todos
                     </Text>
                 </TouchableOpacity>
+
+                {/* Bot??n: COMPLETOS (egresar: 1 Y sincronizado: 1) */}
+                <TouchableOpacity
+                    onPress={() => setSelectedFilter(FILTERS.COMPLETOS)}
+                    style={[
+                        styles.filterButton,
+                        selectedFilter === FILTERS.COMPLETOS && styles.filterButtonActive
+                    ]}
+                >
+                    <Text style={selectedFilter === FILTERS.COMPLETOS ? styles.filterTextActive : styles.filterText}>
+                        Estadisticas
+                    </Text>
+                </TouchableOpacity>
             </View>
 
+            {selectedFilter !== FILTERS.COMPLETOS && (
+                <>
             <View style={{ paddingHorizontal: 30, marginTop: 10 }}>
                 {/* ------------------- INPUT DE BÚSQUEDA ------------------- */}
                 <TextInput
@@ -198,6 +200,11 @@ export default function Index() {
                 </TouchableOpacity>
             </View>
 
+                </>
+            )}
+
+            {selectedFilter !== FILTERS.COMPLETOS && (
+                <>
             {/* ------------------- LISTA / LOADER ------------------- */}
             {isLoading ? (
                 <View style={styles.loaderCentered}>
@@ -272,6 +279,9 @@ export default function Index() {
                 ) : isEmpty && (
                     <Text style={[LocalOrdersStyles.emptyText]}>No hay ingresos cargados.</Text>
                 )}
+
+                </>
+            )}
 
             <View style={styles.versionContainer}>
                 <Text style={styles.versionText}>v{appVersion}</Text>

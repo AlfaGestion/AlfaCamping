@@ -34,6 +34,7 @@ export type IngresoDb = {
   dni: string
   nacionalidad: string
   direccion: string
+  telefono: string
   modelo_vehiculo: string
   ciudad: string
   patente: string
@@ -105,7 +106,7 @@ export function useIngresoDb() {
     const statement = await database.prepareAsync(
       `INSERT INTO ingresos
 
-      (apellido_nombre, ingreso, egreso, observaciones, parcela, dni, nacionalidad, direccion, modelo_vehiculo, 
+      (apellido_nombre, ingreso, egreso, observaciones, parcela, dni, nacionalidad, direccion, telefono, modelo_vehiculo, 
       ciudad, medio_de_pago, patente, amarre, trekking, kayak, embarcado, descuento, subtotal, total, egreso_real, egresar, 
       sincronizado, local, anulado, estadia, hora_ingreso,
       bajada_lancha, precio_bajada_lancha, adultos, precio_adultos, menores, precio_menores,
@@ -113,7 +114,7 @@ export function useIngresoDb() {
       adicional, precio_adicional, bajada_lanchaL, precio_bajada_lanchaL, adicionalL, precio_adicionalL,
       estacionamiento, precio_estacionamiento)
 
-      VALUES ($apellido_nombre, $ingreso, $egreso, $observaciones, $parcela, $dni, $nacionalidad, $direccion, $modelo_vehiculo, 
+      VALUES ($apellido_nombre, $ingreso, $egreso, $observaciones, $parcela, $dni, $nacionalidad, $direccion, $telefono, $modelo_vehiculo, 
       $ciudad, $medio_de_pago, $patente, $amarre, $trekking, $kayak, $embarcado, $descuento, $subtotal, $total, $egreso_real, $egresar, 
       $sincronizado, $local, $anulado, $estadia, $hora_ingreso,  
       $bajada_lancha, $precio_bajada_lancha, $adultos, $precio_adultos, $menores, $precio_menores,
@@ -156,6 +157,7 @@ export function useIngresoDb() {
         $dni: data.dni,
         $nacionalidad: data.nacionalidad,
         $direccion: data.direccion,
+        $telefono: data.telefono,
         $modelo_vehiculo: data.modelo_vehiculo,
         $ciudad: data.ciudad,
         $patente: data.patente,
@@ -200,6 +202,7 @@ export function useIngresoDb() {
         dni = $dni,
         nacionalidad = $nacionalidad,
         direccion = $direccion,
+        telefono = $telefono,
         modelo_vehiculo = $modelo_vehiculo,
         ciudad = $ciudad,
         patente = $patente,
@@ -272,6 +275,7 @@ export function useIngresoDb() {
         $dni: data.dni,
         $nacionalidad: data.nacionalidad,
         $direccion: data.direccion,
+        $telefono: data.telefono,
         $modelo_vehiculo: data.modelo_vehiculo,
         $ciudad: data.ciudad,
         $patente: data.patente,
