@@ -13,7 +13,7 @@ import { useNetInfo } from "@react-native-community/netinfo";
 import { IngresoContext } from "@/context/IngresoContext";
 import { formatDate } from "@/utils/Utils";
 import IngresoItem from "@/components/IngresoItem";
-// import { useApi } from "@/hooks/useApi";
+import { useApi } from "@/hooks/useApi";
 
 
 // --- 1. DEFINICIÓN DE FILTROS ---
@@ -33,6 +33,10 @@ export default function Index() {
     const [selectedFilter, setSelectedFilter] = useState(FILTERS.PENDIENTES_EGRESO); // <-- Estado para el filtro
     const netInfo = useNetInfo();
 
+    const { fetchDataFromApi } = useApi();
+    const [remoteIngresos, setRemoteIngresos] = useState([]);
+    const [remoteLoading, setRemoteLoading] = useState(false);
+
     const {
         ingresos, isLoading,
         searchText, setSearchText,
@@ -41,6 +45,84 @@ export default function Index() {
         setEgresoDate, setEgresoString,
     } = useContext(IngresoContext);
 
+
+
+    useEffect(() => {
+        let isActive = true;
+
+        const fetchRemoteIngresos = async () => {
+            if (selectedFilter !== FILTERS.TODOS) return;
+            if (!netInfo.isConnected) {
+                if (isActive) setRemoteIngresos([]);
+                return;
+            }
+
+            setRemoteLoading(true);
+            try {
+                const trimmedSearch = searchText?.trim() ?? "";
+                const endpoint = trimmedSearch
+                    ? `ingresos/ingresospendientes/search?search=${encodeURIComponent(trimmedSearch)}`
+                    : "ingresos/ingresospendientes";
+                const response = await fetchDataFromApi(endpoint);
+                const raw = response?.data ?? response;
+                const data = Array.isArray(raw)
+                    ? raw
+                    : Array.isArray(raw?.data)
+                        ? raw.data
+                        : Array.isArray(raw?.data?.data)
+                            ? raw.data.data
+                            : [];
+                const limitedData = trimmedSearch ? data : data.slice(0, 50);
+                const mapped = limitedData.map((row, index) => ({
+                    id: row?.Id ?? row?.ID ?? row?.id ?? `${row?.Dni ?? row?.dni ?? 'sin-dni'}-${row?.Ingreso ?? row?.ingreso ?? index}`,
+                    ingreso: formatIsoDate(row?.Ingreso ?? row?.ingreso),
+                    egreso: formatIsoDate(row?.Egreso ?? row?.egreso),
+                    apellido_nombre: row?.ApellidoNombre ?? row?.apellido_nombre ?? '',
+                    parcela: row?.Parcela ?? row?.parcela ?? '',
+                    dni: row?.Dni ?? row?.dni ?? '',
+                    remote: true,
+                }));
+
+                if (isActive) setRemoteIngresos(mapped);
+            } catch (e) {
+                if (isActive) setRemoteIngresos([]);
+            } finally {
+                if (isActive) setRemoteLoading(false);
+            }
+        };
+
+        fetchRemoteIngresos();
+
+        return () => {
+            isActive = false;
+        };
+    }, [selectedFilter, netInfo.isConnected, searchText]);
+
+    const formatIsoDate = (value) => {
+        if (!value) return "";
+        try {
+            const date = new Date(value);
+            if (Number.isNaN(date.getTime())) return String(value);
+            const dd = String(date.getDate()).padStart(2, "0");
+            const mm = String(date.getMonth() + 1).padStart(2, "0");
+            const yyyy = date.getFullYear();
+            return `${dd}/${mm}/${yyyy}`;
+        } catch {
+            return String(value);
+        }
+    };
+
+    const filteredRemoteIngresos = useMemo(() => {
+        if (!remoteIngresos || remoteIngresos.length === 0) return [];
+        if (!searchText) return remoteIngresos;
+        const lowerSearchText = searchText.toLowerCase();
+        return remoteIngresos.filter(item =>
+            (item.apellido_nombre && item.apellido_nombre.toLowerCase().includes(lowerSearchText)) ||
+            (item.dni && item.dni.toString().includes(lowerSearchText)) ||
+            (item.patente && item.patente.toLowerCase().includes(lowerSearchText)) ||
+            (item.parcela !== undefined && item.parcela !== null && item.parcela.toString().includes(lowerSearchText))
+        );
+    }, [remoteIngresos, searchText]);
 
     const filteredIngresos = useMemo(() => {
         if (!ingresos || ingresos.length === 0) {
@@ -96,7 +178,8 @@ export default function Index() {
             filtered = filtered.filter(item =>
                 (item.apellido_nombre && item.apellido_nombre.toLowerCase().includes(lowerSearchText)) ||
                 (item.dni && item.dni.toString().includes(lowerSearchText)) ||
-                (item.patente && item.patente.toLowerCase().includes(lowerSearchText))
+                (item.patente && item.patente.toLowerCase().includes(lowerSearchText)) ||
+                (item.parcela !== undefined && item.parcela !== null && item.parcela.toString().includes(lowerSearchText))
             );
         }
 
@@ -104,6 +187,10 @@ export default function Index() {
 
     }, [ingresos, selectedFilter, searchText]); // Dependencias: re-ejecutar si ingresos, filtro o texto cambian
 
+
+    const isTodos = selectedFilter === FILTERS.TODOS;
+    const listData = isTodos ? filteredRemoteIngresos : filteredIngresos;
+    const listLoading = isTodos ? remoteLoading : isLoading;
 
     return (
         <SafeAreaView style={{ height: "100%" }}>
@@ -145,7 +232,7 @@ export default function Index() {
                     ]}
                 >
                     <Text style={selectedFilter === FILTERS.TODOS ? styles.filterTextActive : styles.filterText}>
-                        Todos
+                        En el predio
                     </Text>
                 </TouchableOpacity>
 
@@ -167,14 +254,25 @@ export default function Index() {
                 <>
             <View style={{ paddingHorizontal: 30, marginTop: 10 }}>
                 {/* ------------------- INPUT DE BÚSQUEDA ------------------- */}
-                <TextInput
-                    value={searchText}
-                    onChangeText={setSearchText}
-                    style={[newTaskStyles.textInput]}
-                    placeholder="Buscar por nombre o DNI..."
-                    returnKeyType="done"
-                    cursorColor="#C0C0C0"
-                />
+                <View style={styles.searchInputWrapper}>
+                    <TextInput
+                        value={searchText}
+                        onChangeText={setSearchText}
+                        style={[newTaskStyles.textInput, styles.searchInput]}
+                        placeholder="Buscar por nombre o DNI..."
+                        returnKeyType="done"
+                        cursorColor="#C0C0C0"
+                    />
+                    {searchText ? (
+                        <TouchableOpacity
+                            style={styles.clearButton}
+                            onPress={() => setSearchText("")}
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
+                            <Ionicons name="close-circle" size={22} color="#284473" />
+                        </TouchableOpacity>
+                    ) : null}
+                </View>
             </View>
 
             {/* ------------------- BOTÓN NUEVO INGRESO ------------------- */}
@@ -206,27 +304,33 @@ export default function Index() {
             {selectedFilter !== FILTERS.COMPLETOS && (
                 <>
             {/* ------------------- LISTA / LOADER ------------------- */}
-            {isLoading ? (
+            {listLoading ? (
                 <View style={styles.loaderCentered}>
                     <ActivityIndicator size="large" className="scale-150" color="#286A73" />
+                    {isTodos && searchText?.trim() ? (
+                        <Text style={styles.searchingText}>Buscando en el servidor...</Text>
+                    ) : null}
                 </View>
             ) :
-                filteredIngresos?.length > 0 ? ( // <-- Usar filteredIngresos aquí
+                listData?.length > 0 ? (
                     <FlatList
                         ListFooterComponent={
                             <View>
-                                <Text style={[LocalOrdersStyles.textDelOrder]}>Toque un ingreso para editarlo</Text>
+                                <Text style={[LocalOrdersStyles.textDelOrder]}>
+                                  {isTodos ? "Listado desde API (solo lectura)" : "Toque un ingreso para editarlo"}
+                                </Text>
                             </View>
                         }
                         ListFooterComponentStyle={{ height: 200 }}
                         scrollEnabled={true}
                         style={[LocalOrdersStyles.flatList]}
-                        data={filteredIngresos} // <-- Usar filteredIngresos aquí
-                        keyExtractor={(item) => item?.id + ""}
+                        data={listData}
+                        keyExtractor={(item, index) => (isTodos ? `${item?.id ?? item?.dni ?? 'row'}-${index}` : item?.id + "")}
                         renderItem={({ item }) => {
                             return (
                                 <IngresoItem
                                     id={item?.id}
+                                    remote={isTodos || item?.remote}
                                     apellido_nombre={item?.apellido_nombre}
                                     dni={item?.dni}
                                     ingreso={item?.ingreso}
@@ -236,7 +340,6 @@ export default function Index() {
                                     egresar={item?.egresar}
                                     sincronizado={item?.sincronizado}
                                     parcela={item?.parcela}
-                                    remote={false}
                                     anulado={item?.anulado}
                                     modelo_vehiculo={item?.modelo_vehiculo}
                                     patente={item?.patente}
@@ -279,7 +382,6 @@ export default function Index() {
                 ) : isEmpty && (
                     <Text style={[LocalOrdersStyles.emptyText]}>No hay ingresos cargados.</Text>
                 )}
-
                 </>
             )}
 
@@ -302,6 +404,12 @@ const styles = StyleSheet.create({
         height: '70%',
         justifyContent: 'center',
         alignItems: 'center',
+    },
+    searchingText: {
+        marginTop: 10,
+        fontSize: 12,
+        color: '#555',
+        fontFamily: "Poppins-Regular",
     },
     versionContainer: {
         paddingVertical: 6,
@@ -344,6 +452,20 @@ const styles = StyleSheet.create({
         fontSize: 11,
         fontWeight: '700',
         textAlign: 'center',
+    },
+    searchInputWrapper: {
+        position: 'relative',
+        justifyContent: 'center',
+    },
+    searchInput: {
+        paddingRight: 34,
+    },
+    clearButton: {
+        position: 'absolute',
+        right: 10,
+        height: '100%',
+        justifyContent: 'center',
+        alignItems: 'center',
     },
 });
 
