@@ -28,7 +28,7 @@ export async function initDb(db: SQLiteDatabase) {
   // 2. Tabla de Ingresos
   await db.execAsync(`
     CREATE TABLE IF NOT EXISTS ingresos (id INTEGER PRIMARY KEY, apellido_nombre TEXT, ingreso TEXT, egreso TEXT, observaciones TEXT, 
-    parcela INTEGER, dni TEXT, nacionalidad TEXT, direccion TEXT, modelo_vehiculo TEXT, ciudad TEXT, patente TEXT, 
+    parcela INTEGER, dni TEXT, nacionalidad TEXT, direccion TEXT, telefono TEXT, modelo_vehiculo TEXT, ciudad TEXT, patente TEXT, 
     amarre BOOLEAN, trekking BOOLEAN, kayak BOOLEAN, embarcado BOOLEAN, descuento INTEGER, 
     total INTEGER, subtotal INTEGER, egreso_real TEXT, egresar BOOLEAN, sincronizado BOOLEAN, 
     adultos INTEGER, menores INTEGER, jubilados INTEGER, adultosL INTEGER, menoresL INTEGER, jubiladosL INTEGER,
@@ -58,6 +58,7 @@ export async function initDb(db: SQLiteDatabase) {
   await addIngresoColumnIfMissing("estacionamiento", "INTEGER");
   await addIngresoColumnIfMissing("precio_estacionamiento", "INTEGER");
   await addIngresoColumnIfMissing("hora_ingreso", "TEXT");
+  await addIngresoColumnIfMissing("telefono", "TEXT");
 
   // 3. Tabla de Clientes
   await db.execAsync(
