@@ -17,6 +17,7 @@ export default function IngresoItem(props) {
   const clienteDb = useClienteDb();
   const router = useRouter();
   const id = props.id;
+  const isRemote = !!props.remote;
 
   const isNombreValido = (value) => {
     const text = typeof value === "string" ? value.trim() : "";
@@ -46,6 +47,7 @@ export default function IngresoItem(props) {
 
   // --- FUNCIÓN PARA COMPARTIR POR WHATSAPP/SISTEMA ---
   const handleSharePDF = async () => {
+    if (isRemote) return;
     try {
       // 1. Generamos el PDF en una ubicación temporal
       const printable = await getPrintableData();
@@ -83,6 +85,7 @@ export default function IngresoItem(props) {
 
   // --- FUNCIÓN PARA IMPRESIÓN DIRECTA ---
   const handlePrint = async () => {
+    if (isRemote) return;
     try {
       const printable = await getPrintableData();
       await Print.printAsync({
@@ -134,8 +137,8 @@ export default function IngresoItem(props) {
 
   return (
     <TouchableOpacity
-      onPress={() => { !props?.anulado && handleClick() }}
-      onLongPress={handleLongPress} // Se dispara al mantener presionado
+      onPress={() => { if (!isRemote && !props?.anulado) handleClick(); }}
+      onLongPress={isRemote ? undefined : handleLongPress} // Se dispara al mantener presionado
       delayLongPress={600}          // Tiempo necesario de presión (ms)
     >
       <View style={styles.container}>
