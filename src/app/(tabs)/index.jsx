@@ -1,5 +1,6 @@
 import { useState, useContext, useMemo, useEffect } from "react" // <-- Importar useMemo
-import { ActivityIndicator, FlatList, Text, TextInput, TouchableOpacity, View, StyleSheet } from "react-native";
+import { ActivityIndicator, FlatList, Text, TextInput, TouchableOpacity, View, StyleSheet, ScrollView } from "react-native";
+import { WebView } from "react-native-webview";
 import { SafeAreaView } from "react-native-safe-area-context";
 import Constants from "expo-constants";
 
@@ -9,11 +10,16 @@ import { newTaskStyles } from "@/styles/TaskStyle";
 import { Ionicons } from "@expo/vector-icons";
 import Colors from "@/styles/Colors";
 import { useNetInfo } from "@react-native-community/netinfo";
+import DateTimePicker from "@react-native-community/datetimepicker";
 
 import { IngresoContext } from "@/context/IngresoContext";
 import { formatDate } from "@/utils/Utils";
 import IngresoItem from "@/components/IngresoItem";
+import InputDate from "@/components/InputDate";
 import { useApi } from "@/hooks/useApi";
+import { useIngresoDb } from "@/db/useIngresoDb";
+import * as Print from "expo-print";
+import * as Sharing from "expo-sharing";
 
 
 // --- 1. DEFINICIÓN DE FILTROS ---
@@ -34,8 +40,18 @@ export default function Index() {
     const netInfo = useNetInfo();
 
     const { fetchDataFromApi } = useApi();
+    const ingresoDb = useIngresoDb();
+    const [statsLoading, setStatsLoading] = useState(false);
+    const [stats, setStats] = useState(null);
+    const [localPendingCount, setLocalPendingCount] = useState(0);
+
+    const [statsFromDate, setStatsFromDate] = useState(new Date());
+    const [statsToDate, setStatsToDate] = useState(new Date());
+    const [showStatsFrom, setShowStatsFrom] = useState(false);
+    const [showStatsTo, setShowStatsTo] = useState(false);
     const [remoteIngresos, setRemoteIngresos] = useState([]);
     const [remoteLoading, setRemoteLoading] = useState(false);
+    const [statsWebHeight, setStatsWebHeight] = useState(700);
 
     const {
         ingresos, isLoading,
@@ -123,6 +139,190 @@ export default function Index() {
             (item.parcela !== undefined && item.parcela !== null && item.parcela.toString().includes(lowerSearchText))
         );
     }, [remoteIngresos, searchText]);
+
+    const DEFAULT_LOGO_URL = "https://alfagestion.com.ar/alfagestion/logo_desemboque.png";
+    const COMPANY_NAME = "CAMPING EL DESEMBOQUE";
+    const buildStatsHtml = (data, desde, hasta, localPending) => {
+        const statsData = data || {};
+        const totalMov = (statsData.ingresaron ?? 0) + (statsData.egresaron ?? 0) + (statsData.en_predio ?? 0);
+        const totalPers = (statsData.adultos ?? 0) + (statsData.menores ?? 0) + (statsData.jubilados ?? 0);
+        const totalServ = (statsData.estacionamientos ?? 0) + (statsData.motorhome ?? 0) + (statsData.bajada_lancha ?? 0);
+        const chartItems = [
+            { label: "Ingresaron", value: statsData.ingresaron ?? 0 },
+            { label: "En el predio", value: statsData.en_predio ?? 0 },
+            { label: "Egresaron", value: statsData.egresaron ?? 0 },
+            { label: "Adultos", value: statsData.adultos ?? 0 },
+            { label: "Menores", value: statsData.menores ?? 0 },
+            { label: "Jubilados", value: statsData.jubilados ?? 0 },
+        ];
+        const maxVal = Math.max(1, ...chartItems.map((i) => Number(i.value) || 0));
+        const chartRows = chartItems
+            .map((i) => {
+                const pct = Math.round((Number(i.value) || 0) * 100 / maxVal);
+                return `<div class="chart-row">
+  <div class="chart-label">${i.label}</div>
+  <div class="chart-bar">
+    <div class="chart-fill" style="width:${pct}%"></div>
+  </div>
+  <div class="chart-value">${i.value ?? 0}</div>
+</div>`;
+            })
+            .join("");
+        return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  @page { size: 80mm auto; margin: 4mm; }
+  body { font-family: Arial, sans-serif; padding: 0; color: #1f2a44; width: 72mm; margin: 0 auto; font-size: 14px; }
+  .header { text-align: center; margin-bottom: 10px; }
+  .logo { width: 120px; height: 120px; object-fit: contain; margin-bottom: 6px; }
+  .title { font-size: 20px; font-weight: 700; margin: 0; text-transform: uppercase; }
+  .subtitle { font-size: 14px; color: #284473; margin: 4px 0 0; }
+  .range { font-size: 12px; color: #666; margin: 4px 0 12px; }
+  .card { border: 1px solid #e1e1e1; border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+  .title { font-size: 14px; font-weight: 700; color: #284473; margin-bottom: 8px; }
+  .row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #f0f0f0; font-size: 13px; }
+  .row:last-child { border-bottom: none; }
+  .total { font-weight: 700; padding-top: 6px; margin-top: 6px; border-top: 1px solid #e6e6e6; }
+  .chart { border: 1px solid #e1e1e1; border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+  .chart-title { font-size: 15px; font-weight: 700; color: #284473; margin-bottom: 8px; }
+  .chart-row { display: grid; grid-template-columns: 90px 1fr 36px; gap: 6px; align-items: center; margin-bottom: 6px; font-size: 13px; }
+  .chart-label { color: #333; }
+  .chart-bar { height: 8px; background: #eef3fb; border-radius: 6px; overflow: hidden; }
+  .chart-fill { height: 100%; background: #f5a623; }
+  .chart-value { text-align: right; color: #284473; font-weight: 700; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <img src="${DEFAULT_LOGO_URL}" class="logo" alt="logo" />
+    <p class="title">${COMPANY_NAME}</p>
+    <p class="subtitle">ESTADISTICAS</p>
+    <div class="range">Desde ${desde} - Hasta ${hasta}</div>
+  </div>
+
+  <div class="chart">
+    <div class="chart-title">Resumen</div>
+    ${chartRows}
+  </div>
+
+  <div class="card">
+    <div class="title">Movimientos</div>
+    <div class="row"><span>Ingresaron</span><span>${statsData.ingresaron ?? 0}</span></div>
+    <div class="row"><span>Egresaron</span><span>${statsData.egresaron ?? 0}</span></div>
+    <div class="row"><span>En el predio</span><span>${statsData.en_predio ?? 0}</span></div>
+    <div class="row total"><span>Total</span><span>${totalMov}</span></div>
+  </div>
+
+  <div class="card">
+    <div class="title">Personas</div>
+    <div class="row"><span>Adultos</span><span>${statsData.adultos ?? 0}</span></div>
+    <div class="row"><span>Menores</span><span>${statsData.menores ?? 0}</span></div>
+    <div class="row"><span>Jubilados</span><span>${statsData.jubilados ?? 0}</span></div>
+    <div class="row total"><span>Total</span><span>${totalPers}</span></div>
+  </div>
+
+  <div class="card">
+    <div class="title">Servicios</div>
+    <div class="row"><span>Estacionamientos</span><span>${statsData.estacionamientos ?? 0}</span></div>
+    <div class="row"><span>Motorhome</span><span>${statsData.motorhome ?? 0}</span></div>
+    <div class="row"><span>Bajada lancha</span><span>${statsData.bajada_lancha ?? 0}</span></div>
+    <div class="row total"><span>Total</span><span>${totalServ}</span></div>
+  </div>
+
+  <div class="card">
+    <div class="title">Local</div>
+    <div class="row"><span>Ingresos locales</span><span>${localPending ?? 0}</span></div>
+  </div>
+</body>
+</html>`;
+    };
+
+    const handleShareStats = async () => {
+        if (!stats) return;
+        const desde = formatDate(statsFromDate, true);
+        const hasta = formatDate(statsToDate, true);
+        const html = buildStatsHtml(stats, desde, hasta, localPendingCount);
+        try {
+            const { uri } = await Print.printToFileAsync({ html, base64: false });
+            const canShare = await Sharing.isAvailableAsync();
+            if (!canShare) return;
+            await Sharing.shareAsync(uri, {
+                mimeType: 'application/pdf',
+                dialogTitle: 'Compartir estadisticas'
+            });
+        } catch (e) {
+            // noop
+        }
+    };
+
+    const parseDMY = (value) => {
+        if (!value) return null;
+        const parts = String(value).split("/");
+        if (parts.length !== 3) return null;
+        const [dd, mm, yyyy] = parts;
+        const d = new Date(Number(yyyy), Number(mm) - 1, Number(dd));
+        return Number.isNaN(d.getTime()) ? null : d;
+    };
+
+    const formatYMD = (date) => {
+        if (!date) return "";
+        const d = new Date(date);
+        const dd = String(d.getDate()).padStart(2, "0");
+        const mm = String(d.getMonth() + 1).padStart(2, "0");
+        const yyyy = d.getFullYear();
+        return `${yyyy}-${mm}-${dd}`;
+    };
+
+    useEffect(() => {
+        if (selectedFilter !== FILTERS.COMPLETOS) return;
+        let isActive = true;
+
+        const loadStats = async () => {
+            if (!netInfo.isConnected) {
+                if (isActive) setStats(null);
+                return;
+            }
+            setStatsLoading(true);
+            try {
+                const desde = formatYMD(statsFromDate);
+                const hasta = formatYMD(statsToDate);
+                const endpoint = `ingresos/estadisticas?desde=${desde}&hasta=${hasta}`;
+                const response = await fetchDataFromApi(endpoint);
+                const payload = response?.data?.data ?? response?.data ?? response;
+                const statsData = Array.isArray(payload) ? payload[0] : payload;
+                if (isActive) setStats(statsData || null);
+            } catch (e) {
+                if (isActive) setStats(null);
+            } finally {
+                if (isActive) setStatsLoading(false);
+            }
+        };
+
+        const loadLocalPending = async () => {
+            try {
+                const all = await ingresoDb.getAll();
+                const desde = new Date(statsFromDate);
+                const hasta = new Date(statsToDate);
+                const count = all.filter(item => {
+                    const d = parseDMY(item?.ingreso);
+                    if (!d) return false;
+                    return d >= new Date(desde.getFullYear(), desde.getMonth(), desde.getDate()) &&
+                        d <= new Date(hasta.getFullYear(), hasta.getMonth(), hasta.getDate());
+                }).length;
+                if (isActive) setLocalPendingCount(count);
+            } catch {
+                if (isActive) setLocalPendingCount(0);
+            }
+        };
+
+        loadStats();
+        loadLocalPending();
+
+        return () => { isActive = false; };
+    }, [selectedFilter, statsFromDate, statsToDate, netInfo.isConnected]);
 
     const filteredIngresos = useMemo(() => {
         if (!ingresos || ingresos.length === 0) {
@@ -249,6 +449,85 @@ export default function Index() {
                     </Text>
                 </TouchableOpacity>
             </View>
+
+            {selectedFilter === FILTERS.COMPLETOS && (
+                <ScrollView contentContainerStyle={styles.statsContainer} nestedScrollEnabled>
+                    <View style={styles.dateRow}>
+                        <View style={styles.dateCol}>
+                            <InputDate
+                                title="Desde"
+                                value={formatDate(statsFromDate, true)}
+                                callback={() => setShowStatsFrom(true)}
+                            />
+                        </View>
+                        <View style={styles.dateCol}>
+                            <InputDate
+                                title="Hasta"
+                                value={formatDate(statsToDate, true)}
+                                callback={() => setShowStatsTo(true)}
+                            />
+                        </View>
+                    </View>
+
+                    {showStatsFrom && (
+                        <DateTimePicker
+                            value={statsFromDate}
+                            mode="date"
+                            onChange={(event, selectedDate) => {
+                                if (event.type === "dismissed") { setShowStatsFrom(false); return; }
+                                const current = selectedDate || statsFromDate;
+                                setShowStatsFrom(false);
+                                setStatsFromDate(current);
+                                if (current > statsToDate) setStatsToDate(current);
+                            }}
+                        />
+                    )}
+
+                    {showStatsTo && (
+                        <DateTimePicker
+                            value={statsToDate}
+                            mode="date"
+                            onChange={(event, selectedDate) => {
+                                if (event.type === "dismissed") { setShowStatsTo(false); return; }
+                                const current = selectedDate || statsToDate;
+                                setShowStatsTo(false);
+                                setStatsToDate(current);
+                            }}
+                        />
+                    )}
+
+                    {statsLoading ? (
+                        <View style={styles.statsLoading}>
+                            <ActivityIndicator size="large" color="#286A73" />
+                            <Text style={styles.searchingText}>Cargando estadisticas...</Text>
+                        </View>
+                    ) : stats ? (
+                        <>
+                            <Text style={styles.previewTitle}>Vista previa</Text>
+                            <View style={styles.statsWebViewWrapper}>
+                                <WebView
+                                    originWhitelist={["*"]}
+                                    source={{ html: buildStatsHtml(stats, formatDate(statsFromDate, true), formatDate(statsToDate, true), localPendingCount) }}
+                                    style={[styles.statsWebView, { height: statsWebHeight }]}
+                                    scrollEnabled={false}
+                                    injectedJavaScript={"setTimeout(function(){window.ReactNativeWebView.postMessage(String(document.body.scrollHeight));}, 100); true;"}
+                                    onMessage={(event) => {
+                                        const h = Number(event.nativeEvent.data);
+                                        if (!Number.isNaN(h) && h > 0) {
+                                            setStatsWebHeight(h);
+                                        }
+                                    }}
+                                />
+                            </View>
+                            <TouchableOpacity style={styles.statsShareButton} onPress={handleShareStats}>
+                                <Text style={styles.statsShareText}>Enviar</Text>
+                            </TouchableOpacity>
+                        </>
+                    ) : (
+                        <Text style={styles.emptyStatsText}>Sin datos para el rango seleccionado.</Text>
+                    )}
+                </ScrollView>
+            )}
 
             {selectedFilter !== FILTERS.COMPLETOS && (
                 <>
@@ -466,6 +745,62 @@ const styles = StyleSheet.create({
         height: '100%',
         justifyContent: 'center',
         alignItems: 'center',
+    },
+
+    statsContainer: {
+        paddingHorizontal: 20,
+        paddingTop: 10,
+        paddingBottom: 20,
+    },
+    dateRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        gap: 10,
+    },
+    dateCol: {
+        flex: 1,
+    },
+    statsLoading: {
+        paddingVertical: 20,
+        alignItems: 'center',
+    },
+    emptyStatsText: {
+        marginTop: 10,
+        fontSize: 12,
+        color: '#777',
+        textAlign: 'center',
+        fontFamily: "Poppins-Regular",
+    },
+    previewTitle: {
+        marginTop: 10,
+        fontSize: 12,
+        color: '#284473',
+        fontFamily: "Poppins-Bold",
+    },
+    statsWebViewWrapper: {
+        marginTop: 12,
+        borderWidth: 1,
+        borderColor: '#e1e1e1',
+        borderRadius: 10,
+        overflow: 'hidden',
+        backgroundColor: '#f7f7f7',
+        minHeight: 100,
+    },
+    statsWebView: {
+        flex: 1,
+        backgroundColor: '#fff',
+    },
+    statsShareButton: {
+        marginTop: 10,
+        backgroundColor: '#284473',
+        borderRadius: 8,
+        paddingVertical: 10,
+        alignItems: 'center',
+    },
+    statsShareText: {
+        color: '#fff',
+        fontFamily: "Poppins-Bold",
+        fontSize: 14,
     },
 });
 

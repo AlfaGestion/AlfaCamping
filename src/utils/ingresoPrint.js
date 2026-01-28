@@ -69,40 +69,42 @@ export const buildIngresoHtml = (ingreso, options = {}) => {
       <head>
         <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
         <style>
+          @page { size: 80mm auto; margin: 4mm; }
           body { 
             font-family: 'Courier New', Courier, monospace; 
-            padding: 5px; 
+            padding: 0; 
             color: #000; 
-            width: 280px; /* Ajuste fino para margen de 80mm */
-            margin: auto;
+            width: 72mm;
+            margin: 0 auto;
+            font-size: 14px;
           }
           .header { text-align: center; margin-bottom: 5px; }
           .logo { 
-            width: 80px; 
-            height: 80px; 
+            width: 100px; 
+            height: 100px; 
             object-fit: contain;
             filter: grayscale(100%); /* Asegura que sea B&N para la térmica */
             margin-bottom: 5px;
           }
-          .title { font-size: 16px; font-weight: bold; margin: 0; text-transform: uppercase; }
-          .subtitle { font-size: 13px; margin: 2px 0; border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 2px 0; }
+          .title { font-size: 20px; font-weight: bold; margin: 0; text-transform: uppercase; }
+          .subtitle { font-size: 15px; margin: 4px 0; border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 3px 0; }
           
           .divider { border-top: 1px dashed #000; margin: 8px 0; }
           
-          .section-title { font-weight: bold; margin-bottom: 5px; font-size: 12px; }
+          .section-title { font-weight: bold; margin-bottom: 5px; font-size: 13px; }
           
-          .row { display: flex; justify-content: space-between; margin-bottom: 3px; font-size: 11px; }
+          .row { display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 13px; }
           .label { font-weight: bold; }
           
           .table { width: 100%; margin-top: 5px; border-collapse: collapse; }
-          .table th { border-bottom: 1px solid #000; text-align: left; font-size: 10px; }
-          .table td { font-size: 10px; padding: 3px 0; }
+          .table th { border-bottom: 1px solid #000; text-align: left; font-size: 12px; }
+          .table td { font-size: 12px; padding: 5px 0; }
           .text-right { text-align: right; }
           
           .total-container { margin-top: 10px; border-top: 2px solid #000; padding-top: 5px; }
-          .total-row { display: flex; justify-content: space-between; font-size: 15px; font-weight: bold; }
+          .total-row { display: flex; justify-content: space-between; font-size: 19px; font-weight: bold; }
           
-          .footer { margin-top: 15px; text-align: center; font-size: 10px; line-height: 1.2; }
+          .footer { margin-top: 15px; text-align: center; font-size: 12px; line-height: 1.3; }
         </style>
       </head>
       <body>
