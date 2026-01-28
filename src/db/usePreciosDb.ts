@@ -18,15 +18,22 @@ export function usePreciosDb() {
             // Usamos una transacción para que sea mucho más rápido
             await database.withTransactionAsync(async () => {
                 for (const item of precios) {
-                    // "INSERT OR REPLACE" reemplaza el registro completo si el 'codigo' ya existe
                     await database.runAsync(
-                        `INSERT OR REPLACE INTO precios (codigo, precio, descripcion) 
-                         VALUES (?, ?, COALESCE((SELECT descripcion FROM precios WHERE codigo = ?), ?))`,
+                        `INSERT INTO precios (codigo, precio, descripcion)
+                         VALUES (?, ?, ?)
+                         ON CONFLICT(codigo) DO UPDATE SET
+                           precio = CASE
+                             WHEN excluded.precio IS NULL OR excluded.precio = 0 THEN precios.precio
+                             ELSE excluded.precio
+                           END,
+                           descripcion = CASE
+                             WHEN excluded.descripcion IS NULL OR excluded.descripcion = '' THEN precios.descripcion
+                             ELSE excluded.descripcion
+                           END`,
                         [
                             item.CLAVE,
                             item.VALOR,
-                            item.CLAVE,
-                            item.descripcion || '' // Mantiene la descripci??n local si existe
+                            item.descripcion || ''
                         ]
                     );
                 }
