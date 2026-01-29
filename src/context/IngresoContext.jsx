@@ -4,6 +4,7 @@ import { useIngresoDb } from '@/db/useIngresoDb'
 import { useClienteDb } from '@/db/useClienteDb'
 import { usePreciosDb } from '@/db/usePreciosDb'
 import { useMediosDePagoDb } from '@/db/useMediosDePagoDb'
+import { useConfigDb } from '@/db/useConfigDb'
 import { useApi } from '@/hooks/useApi'
 import { useRouter } from 'expo-router'
 import Toast from 'react-native-toast-message'
@@ -17,6 +18,7 @@ const IngresoContextProvider = ({ children }) => {
   const clienteDb = useClienteDb()
   const preciosDb = usePreciosDb()
   const mediosDePagoDb = useMediosDePagoDb()
+  const configDb = useConfigDb()
   const netInfo = useNetInfo();
 
   const [isLoading, setIsLoading] = useState(false)
@@ -126,20 +128,51 @@ const IngresoContextProvider = ({ children }) => {
   const { fetchDataFromApi, sendDataToApi } = useApi()
   const [precios, setPrecios] = useState([])
   const [mediosDePago, setMediosDePago] = useState([])
+  const [warnedEmptyPrices, setWarnedEmptyPrices] = useState(false)
+
+  const notifyEmptyPrices = () => {
+    Alert.alert(
+      "Precios sin sincronizar",
+      "La base local está vacía. ¿Desea sincronizar los precios ahora?",
+      [
+        { text: "Cancelar", style: "cancel" },
+        { text: "Sincronizar", onPress: () => fetchPrecios() }
+      ]
+    )
+  }
 
   const fetchPrecios = async () => {
-    if (!netInfo.isConnected) return;
+    if (!netInfo.isConnected) {
+      if (!warnedEmptyPrices) {
+        const allPrices = await preciosDb.getAll();
+        if (!allPrices || allPrices.length === 0) {
+          setWarnedEmptyPrices(true);
+          notifyEmptyPrices();
+        }
+      }
+      return;
+    }
     try {
       const data = await fetchDataFromApi('ingresos/precios');
       //console.log(data.data)  //25-01-2026
       
       if (data?.data) {
+        const passwordItem = data.data.find(item => item?.CLAVE === "ING_CLAVEVACIARBASE");
+        if (passwordItem?.VALOR !== undefined && passwordItem?.VALOR !== null && passwordItem?.VALOR !== "") {
+          await configDb.setConfigValue("ING_CLAVEVACIARBASE", String(passwordItem.VALOR));
+        }
+
+        const preciosItems = data.data.filter(item => item?.CLAVE !== "ING_CLAVEVACIARBASE");
         // 1. Enviamos los datos para que SQLite decida qué actualizar
-        await preciosDb.upsertPrecios(data.data);
+        await preciosDb.upsertPrecios(preciosItems);
 
         // 2. Traemos la lista actualizada de la DB local
         const allPrices = await preciosDb.getAll();
         setPrecios(allPrices);
+        if ((!allPrices || allPrices.length === 0) && !warnedEmptyPrices) {
+          setWarnedEmptyPrices(true);
+          notifyEmptyPrices();
+        }
       }
     } catch (error) {
       console.error("Error fetching precios:", error);
@@ -347,6 +380,10 @@ const IngresoContextProvider = ({ children }) => {
         nombreRef?.current?.focus()
       }, 500)
     }
+  }
+
+  const refreshDniInput = () => {
+    setDniRefresh(prevKey => prevKey + 1)
   }
 
   const handleNombreSubmit = () => {
@@ -1272,6 +1309,7 @@ const IngresoContextProvider = ({ children }) => {
         dniRefresh, nombreRefresh, parcelaRefresh, nacionalidadRefresh, direccionRefresh, ciudadRefresh, telefonoRefresh, patenteRefresh, modeloRefresh,
         bajadaRefresh, amarreRefresh, mayoresRefresh, menoresRefresh, jubiladosRefresh, observacionesRefresh,
 
+        refreshDniInput,
         handleDniSubmit, handleNombreSubmit, handleParcelaSubmit, handleNacionalidadSubmit, handleDireccionSubmit, handleCiudadSubmit, handleTelefonoSubmit, handlePatenteSubmit, handleModeloSubmit,
         handleBajadaSubmit, handleAmarreSubmit, handleMayoresSubmit, handleMenoresSubmit, handleJubiladosSubmit, handleObservacionesSubmit,
 

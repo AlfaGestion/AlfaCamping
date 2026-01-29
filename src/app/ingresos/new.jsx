@@ -14,11 +14,13 @@ import { IngresoContext } from "@/context/IngresoContext";
 import { router } from "expo-router";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { useConfigDb } from "@/db/useConfigDb";
+import { useClienteDb } from "@/db/useClienteDb";
 import { useFocusEffect } from "@react-navigation/native";
 import { useNetInfo } from "@react-native-community/netinfo";
 
 export default function New() {
   const configDb = useConfigDb();
+  const clienteDb = useClienteDb();
   const netInfo = useNetInfo();
 
   const {
@@ -31,6 +33,7 @@ export default function New() {
     showEgreso, setShowEgreso,
     dniRef, nombreRef, parcelaRef, nacionalidadRef, direccionRef, ciudadRef, telefonoRef, patenteRef, modeloRef, observacionesRef,
     dniRefresh, nombreRefresh, parcelaRefresh, nacionalidadRefresh, direccionRefresh, ciudadRefresh, telefonoRefresh, patenteRefresh, modeloRefresh, observacionesRefresh,
+    refreshDniInput,
     handleDniSubmit, handleNombreSubmit, handleParcelaSubmit, handleNacionalidadSubmit, handleDireccionSubmit, handleCiudadSubmit, handleTelefonoSubmit, handlePatenteSubmit, handleModeloSubmit, handleObservacionesSubmit,
     isEditIngreso, markOut, anulled, handleDeleteIngreso
   } = useContext(IngresoContext);
@@ -38,15 +41,36 @@ export default function New() {
   const [clientes, setClientes] = useState([]);
   const [clientesLoading, setClientesLoading] = useState(false);
   const [selectedCliente, setSelectedCliente] = useState("");
+  const [dniInput, setDniInput] = useState("");
   const CLIENTE_LOOKUP_ENDPOINT = "ingresos/clientes";
 
   const searchCliente = (dni) => {
+    setDniInput(dni);
     setIngreso({ ...ingreso, dni });
   };
 
   const handleDniBlur = async () => {
-    if (!ingreso?.dni) return;
-    await fetchClienteData(ingreso.dni);
+    const dniValue = dniInput || ingreso?.dni;
+    if (!dniValue) return;
+    await fetchClienteData(dniValue);
+  };
+
+  const handleDniSearchPress = async () => {
+    const dniValue = dniInput || ingreso?.dni;
+    if (!dniValue) {
+      Alert.alert("Atención", "Debe ingresar el DNI del cliente.");
+      refreshDniInput();
+      setTimeout(() => {
+        dniRef?.current?.focus();
+      }, 300);
+      return;
+    }
+
+    // Reset local lookup state to avoid stale input/suggestions
+    setClientes([]);
+    setSelectedCliente("");
+    refreshDniInput();
+    await fetchClienteData(dniValue);
   };
 
   const readField = (obj, ...keys) => {
@@ -60,11 +84,31 @@ export default function New() {
   };
 
   const fetchClienteData = async (dniSeleccionado) => {
-    if (!netInfo.isConnected) return;
-
     setClientesLoading(true);
 
     try {
+      const [localCliente] = await clienteDb.findByDni(dniSeleccionado);
+
+      if (localCliente) {
+        const updates = {
+          apellido_nombre: localCliente.apellido_nombre,
+          dni: localCliente.dni?.toString(),
+          nacionalidad: localCliente.nacionalidad,
+          direccion: localCliente.direccion,
+          ciudad: localCliente.ciudad,
+          patente: localCliente.patente,
+          modelo_vehiculo: localCliente.modelo_vehiculo,
+          telefono: localCliente.telefono,
+        };
+
+        setIngreso((prev) => ({ ...prev, ...updates }));
+        setClientes([]);
+        Keyboard.dismiss();
+        return;
+      }
+
+      if (!netInfo.isConnected) return;
+
       const [apiRow] = await configDb.getConfigValue("api_uri");
       const [tokenRow] = await configDb.getConfigValue("TOKEN");
       const apiUri = apiRow?.valor?.trim();
@@ -238,6 +282,18 @@ export default function New() {
               onBlurFn={handleDniBlur}
               hideSuggestions={true}
             />
+            <TouchableOpacity
+              onPress={handleDniSearchPress}
+              disabled={clientesLoading}
+              style={[
+                newOrderStyles.btnOptions,
+                styles.dniSearchButton,
+                { backgroundColor: clientesLoading ? "#ccc" : Colors.DBLUE }
+              ]}
+            >
+              <Ionicons name="search-outline" color="white" size={18} />
+              <Text style={newOrderStyles.textBtnOptions}>BUSCAR DNI</Text>
+            </TouchableOpacity>
 
             <View style={styles.inputGroup}>
               <Text style={newTaskStyles.label}>Nombre y Apellido</Text>
@@ -388,6 +444,7 @@ const styles = StyleSheet.create({
   card: { backgroundColor: 'white', borderRadius: 12, padding: 15, marginBottom: 15, elevation: 2 },
   row: { flexDirection: 'row', justifyContent: 'space-between' },
   inputGroup: { marginTop: 12 },
+  dniSearchButton: { width: "100%", marginTop: 8, borderRadius: 8 },
   backButton: {
     flexDirection: "row",
     alignItems: "center",

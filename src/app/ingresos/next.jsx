@@ -15,6 +15,7 @@ import * as Sharing from 'expo-sharing';
 import { IngresoContext } from "@/context/IngresoContext";
 import Colors from "@/styles/Colors";
 import { buildIngresoHtml } from "@/utils/ingresoPrint";
+import { parseNumber } from "@/utils/Utils";
 
 const CATEGORIES = [
   {
@@ -123,14 +124,14 @@ export default function NewTaskScreen() {
       const useDiurno = isSameDay && cat.dbKeyD && cat.dbKeyLD;
       const key = useDiurno ? cat.dbKeyD : cat.dbKey;
       const keyL = useDiurno ? cat.dbKeyLD : cat.dbKeyL;
-      p[cat.key] = preciosArr.find(item => item.codigo === key)?.precio || 0;
-      p[`${cat.key}L`] = preciosArr.find(item => item.codigo === keyL)?.precio || 0;
+      p[cat.key] = parseNumber(preciosArr.find(item => item.codigo === key)?.precio);
+      p[`${cat.key}L`] = parseNumber(preciosArr.find(item => item.codigo === keyL)?.precio);
     });
 
     // Mapeo explícito para Motorhome
-    p.adicional = preciosArr.find(item => item.codigo === "ING_MOTORHOME")?.precio || 0;
-    p.adicionalL = preciosArr.find(item => item.codigo === "INGL_MOTORHOME")?.precio || 0;
-    p.estacionamiento = preciosArr.find(item => item.codigo === "ING_ESTACIONAMIENTO")?.precio || 0;
+    p.adicional = parseNumber(preciosArr.find(item => item.codigo === "ING_MOTORHOME")?.precio);
+    p.adicionalL = parseNumber(preciosArr.find(item => item.codigo === "INGL_MOTORHOME")?.precio);
+    p.estacionamiento = parseNumber(preciosArr.find(item => item.codigo === "ING_ESTACIONAMIENTO")?.precio);
 
     return p;
   }, [preciosArr, isSameDay]);

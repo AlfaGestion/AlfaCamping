@@ -1,6 +1,6 @@
 
-import { useEffect, useContext } from "react"
-import { View, StyleSheet, Text, TextInput, ActivityIndicator, ScrollView, TouchableOpacity, Alert } from "react-native"
+import { useEffect, useContext, useState } from "react"
+import { View, StyleSheet, Text, TextInput, ActivityIndicator, ScrollView, TouchableOpacity, Alert, Modal } from "react-native"
 import { SafeAreaView } from "react-native-safe-area-context"
 import Constants from "expo-constants"
 import { Ionicons } from "@expo/vector-icons"
@@ -23,6 +23,9 @@ export default function Settings() {
   const router = useRouter()
   const netInfo = useNetInfo();
   const appVersion = Constants.expoConfig?.version ?? Constants.manifest?.version ?? "dev";
+  const [showResetModal, setShowResetModal] = useState(false)
+  const [resetPassword, setResetPassword] = useState("")
+  const [resetError, setResetError] = useState("")
 
   const {
     isLoading: isLoadingIngresos,
@@ -58,6 +61,7 @@ export default function Settings() {
     try {
       const response = await configDb.fetchConfig()
       setConfig(response)
+      console.info("CONFIG_KEYS:", (response || []).map(r => r.clave))
       fetchPrecios()
       fetchMediosDePago()
       // console.log(response)
@@ -153,6 +157,29 @@ export default function Settings() {
         }
       ]
     )
+  }
+
+  const handleResetRequest = () => {
+    setResetPassword("")
+    setResetError("")
+    setShowResetModal(true)
+  }
+
+  const handleResetConfirm = async () => {
+    try {
+      const [row] = await configDb.getConfigValue("ING_CLAVEVACIARBASE")
+      const expected = (row?.valor ?? "Alfa@").toString().trim()
+      console.info("ING_CLAVEVACIARBASE:", expected ? "<set>" : "<empty>", expected)
+      if (resetPassword !== expected) {
+        setResetError("Contraseña incorrecta.")
+        return
+      }
+      setShowResetModal(false)
+      handleResetDb()
+    } catch (error) {
+      console.error(error)
+      setResetError("No se pudo validar la contraseña.")
+    }
   }
 
   const fillConfig = () => {
@@ -339,7 +366,7 @@ export default function Settings() {
               </TouchableOpacity>
 
               <TouchableOpacity
-                onPress={handleResetDb}
+                onPress={handleResetRequest}
                 style={[
                   { ...newOrderStyles.btnOptions, ...newOrderStyles.btnCancel },
                   { width: "100%", marginBottom: 30 }
@@ -356,6 +383,43 @@ export default function Settings() {
           </View>
         </SafeAreaView>
       }
+
+      <Modal
+        transparent
+        visible={showResetModal}
+        animationType="fade"
+        onRequestClose={() => setShowResetModal(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Confirmar eliminación</Text>
+            <Text style={styles.modalText}>Ingrese la contraseña para vaciar la base local.</Text>
+            <TextInput
+              value={resetPassword}
+              onChangeText={setResetPassword}
+              placeholder="Contraseña"
+              secureTextEntry
+              style={styles.modalInput}
+              autoFocus
+            />
+            {resetError ? <Text style={styles.modalError}>{resetError}</Text> : null}
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                onPress={() => setShowResetModal(false)}
+                style={[newOrderStyles.btnOptions, styles.modalBtnCancel]}
+              >
+                <Text style={newOrderStyles.textBtnOptions}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleResetConfirm}
+                style={[newOrderStyles.btnOptions, styles.modalBtnConfirm]}
+              >
+                <Text style={newOrderStyles.textBtnOptions}>Confirmar</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </>
   )
 }
@@ -370,5 +434,55 @@ const styles = StyleSheet.create({
     height: '100%',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+  modalCard: {
+    width: "100%",
+    backgroundColor: "white",
+    borderRadius: 12,
+    padding: 20,
+  },
+  modalTitle: {
+    fontFamily: "Poppins-Bold",
+    fontSize: 16,
+    marginBottom: 8,
+  },
+  modalText: {
+    fontFamily: "Poppins-Regular",
+    fontSize: 13,
+    marginBottom: 10,
+  },
+  modalInput: {
+    borderWidth: 1,
+    borderColor: "#ddd",
+    borderRadius: 8,
+    padding: 10,
+    fontFamily: "Poppins-Regular",
+  },
+  modalError: {
+    color: "red",
+    marginTop: 8,
+    fontFamily: "Poppins-Regular",
+  },
+  modalActions: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 14,
+  },
+  modalBtnCancel: {
+    flex: 1,
+    marginRight: 8,
+    backgroundColor: "#999",
+  },
+  modalBtnConfirm: {
+    flex: 1,
+    marginLeft: 8,
+    backgroundColor: "#D64545",
   },
 })
