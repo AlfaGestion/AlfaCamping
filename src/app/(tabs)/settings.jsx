@@ -23,7 +23,11 @@ import Toast from "react-native-toast-message"
 export default function Settings() {
   const router = useRouter()
   const netInfo = useNetInfo();
-  const appVersion = Constants.expoConfig?.version ?? Constants.manifest?.version ?? "dev";
+  const appVersion =
+    process.env.EXPO_PUBLIC_APP_LABEL_VERSION
+    ?? Constants.expoConfig?.version
+    ?? Constants.manifest?.version
+    ?? "dev";
   const [showResetModal, setShowResetModal] = useState(false)
   const [resetPassword, setResetPassword] = useState("")
   const [resetError, setResetError] = useState("")
@@ -469,7 +473,7 @@ export default function Settings() {
               </TouchableOpacity>
 
               <View style={styles.versionContainer}>
-                <Text style={styles.versionText}>v{appVersion}</Text>
+                <Text style={styles.versionText}>Version: {appVersion}</Text>
               </View>
             </ScrollView>
           </View>

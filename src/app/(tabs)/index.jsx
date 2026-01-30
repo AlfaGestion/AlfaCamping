@@ -32,7 +32,11 @@ const FILTERS = {
 
 export default function Index() {
     const router = useRouter();
-    const appVersion = Constants.expoConfig?.version ?? Constants.manifest?.version ?? "dev";
+    const appVersion =
+        process.env.EXPO_PUBLIC_APP_LABEL_VERSION
+        ?? Constants.expoConfig?.version
+        ?? Constants.manifest?.version
+        ?? "dev";
 
     const [isEmpty, setIsEmpty] = useState(true);
     const [selectedFilter, setSelectedFilter] = useState(FILTERS.PENDIENTES_EGRESO); // <-- Estado para el filtro
@@ -865,7 +869,7 @@ export default function Index() {
             )}
 
             <View style={styles.versionContainer}>
-                <Text style={styles.versionText}>v{appVersion}</Text>
+                <Text style={styles.versionText}>Version: {appVersion}</Text>
             </View>
         </SafeAreaView>
     );
