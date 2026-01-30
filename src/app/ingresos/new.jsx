@@ -166,6 +166,28 @@ export default function New() {
         setIngreso((prev) => ({ ...prev, ...updates }));
         setClientes([]);
         Keyboard.dismiss();
+        try {
+          const dniString = (dniValue ?? dniSeleccionado ?? "").toString();
+          const dbPayload = {
+            id: 0,
+            apellido_nombre: apellidoNombre ?? "",
+            dni: dniString,
+            nacionalidad: nacionalidad ?? "",
+            direccion: direccion ?? "",
+            modelo_vehiculo: modeloVehiculo ?? "",
+            ciudad: ciudad ?? "",
+            patente: patente ?? "",
+            telefono: telefono ?? "",
+          };
+          const existing = await clienteDb.findByDni(dniString);
+          if (existing?.length) {
+            await clienteDb.update({ ...dbPayload, id: existing[0].id });
+          } else if (dniString) {
+            await clienteDb.create(dbPayload);
+          }
+        } catch (e) {
+          // Best-effort cache to avoid repeated remote lookup alerts.
+        }
         Alert.alert("Encontrado en servidor", "Se encontró el cliente en la API. Recordá sincronizar los últimos datos.");
       }
     } catch (error) {

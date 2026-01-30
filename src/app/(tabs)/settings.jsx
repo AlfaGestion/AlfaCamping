@@ -130,17 +130,19 @@ export default function Settings() {
       console.info("CONFIG_KEYS:", (response || []).map(r => r.clave))
       if (showSync) setSyncSteps(prev => ({ ...prev, config: "done" }))
 
-      if (showSync) setSyncSteps(prev => ({ ...prev, precios: "loading" }))
-      await fetchPrecios()
-      if (showSync) setSyncSteps(prev => ({ ...prev, precios: "done" }))
+      if (showSync) {
+        setSyncSteps(prev => ({ ...prev, precios: "loading" }))
+        await fetchPrecios()
+        setSyncSteps(prev => ({ ...prev, precios: "done" }))
 
-      if (showSync) setSyncSteps(prev => ({ ...prev, medios: "loading" }))
-      await fetchMediosDePago()
-      if (showSync) setSyncSteps(prev => ({ ...prev, medios: "done" }))
+        setSyncSteps(prev => ({ ...prev, medios: "loading" }))
+        await fetchMediosDePago()
+        setSyncSteps(prev => ({ ...prev, medios: "done" }))
 
-      if (showSync) setSyncSteps(prev => ({ ...prev, clientes: "loading" }))
-      await syncClientesIngresos()
-      if (showSync) setSyncSteps(prev => ({ ...prev, clientes: "done" }))
+        setSyncSteps(prev => ({ ...prev, clientes: "loading" }))
+        await syncClientesIngresos()
+        setSyncSteps(prev => ({ ...prev, clientes: "done" }))
+      }
       // console.log(response)
     } catch (error) {
       console.error(error)
@@ -499,7 +501,7 @@ export default function Settings() {
                   <Ionicons name="ellipse-outline" size={16} color="#999" />
                 )}
               </View>
-              <Text style={styles.syncText}>ConfiguraciÃ³n</Text>
+              <Text style={styles.syncText}>Configuración</Text>
               <Text style={styles.syncStatus}>
                 {syncSteps.config === "loading" ? "Sincronizando..." : syncSteps.config === "done" ? "Listo" : syncSteps.config === "error" ? "Error" : "Pendiente"}
               </Text>
