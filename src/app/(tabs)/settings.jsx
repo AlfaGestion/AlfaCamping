@@ -14,6 +14,7 @@ import { useMediosDePagoDb } from "@/db/useMediosDePagoDb"
 import { useIngresoDb } from "@/db/useIngresoDb"
 import { useClienteDb } from "@/db/useClienteDb"
 import { useNetInfo } from "@react-native-community/netinfo";
+import { useApi } from "@/hooks/useApi"
 
 import { newTaskStyles } from "@/styles/TaskStyle"
 import { newOrderStyles } from "@/styles/OrderStyle"
@@ -26,6 +27,14 @@ export default function Settings() {
   const [showResetModal, setShowResetModal] = useState(false)
   const [resetPassword, setResetPassword] = useState("")
   const [resetError, setResetError] = useState("")
+  const [showSyncModal, setShowSyncModal] = useState(false)
+  const [syncDone, setSyncDone] = useState(false)
+  const [syncSteps, setSyncSteps] = useState({
+    config: "pending",
+    precios: "pending",
+    medios: "pending",
+    clientes: "pending",
+  })
 
   const {
     isLoading: isLoadingIngresos,
@@ -54,22 +63,103 @@ export default function Settings() {
   const mediosDb = useMediosDePagoDb()
   const ingresoDb = useIngresoDb()
   const clienteDb = useClienteDb()
+  const { fetchDataFromApi } = useApi()
 
-  const list = async () => {
-    setIsLoading(true)
+  const readField = (obj, ...keys) => {
+    for (const key of keys) {
+      const value = obj?.[key]
+      if (value !== undefined && value !== null && value !== "") {
+        return value
+      }
+    }
+    return undefined
+  }
+
+  const syncClientesIngresos = async () => {
+    const endpoints = ["ingresos/clientes", "ObtenerClientes"]
+    let response = null
+
+    for (const endpoint of endpoints) {
+      response = await fetchDataFromApi(endpoint)
+      if (response && !response?.error) break
+    }
+
+    if (!response || response?.error) {
+      throw new Error(response?.message ?? "Respuesta invÃ¡lida")
+    }
+
+    const payload = response?.data ?? response
+    const clientes = Array.isArray(payload) ? payload : (payload?.data ?? [])
+
+    if (!Array.isArray(clientes) || clientes.length === 0) {
+      return
+    }
+
+    await clienteDb.deleteAll()
+
+    for (const item of clientes) {
+      const dni = readField(item, "dni", "Dni")
+      if (!dni) continue
+
+      await clienteDb.create({
+        apellido_nombre: readField(item, "apellido_nombre", "ApellidoNombre") || "",
+        dni: dni.toString(),
+        nacionalidad: readField(item, "nacionalidad", "Nacionalidad") || "",
+        direccion: readField(item, "direccion", "Direccion") || "",
+        modelo_vehiculo: readField(item, "modelo_vehiculo", "ModeloVehiculo") || "",
+        ciudad: readField(item, "ciudad", "Ciudad") || "",
+        patente: readField(item, "patente", "Patente") || "",
+        telefono: readField(item, "telefono", "Telefono") || "",
+      })
+    }
+  }
+
+  const list = async ({ showSync = false } = {}) => {
+    if (showSync) {
+      setSyncSteps({ config: "pending", precios: "pending", medios: "pending", clientes: "pending" })
+      setSyncDone(false)
+      setShowSyncModal(true)
+    } else {
+      setIsLoading(true)
+    }
 
     try {
+      if (showSync) setSyncSteps(prev => ({ ...prev, config: "loading" }))
       const response = await configDb.fetchConfig()
       setConfig(response)
       console.info("CONFIG_KEYS:", (response || []).map(r => r.clave))
-      fetchPrecios()
-      fetchMediosDePago()
+      if (showSync) setSyncSteps(prev => ({ ...prev, config: "done" }))
+
+      if (showSync) setSyncSteps(prev => ({ ...prev, precios: "loading" }))
+      await fetchPrecios()
+      if (showSync) setSyncSteps(prev => ({ ...prev, precios: "done" }))
+
+      if (showSync) setSyncSteps(prev => ({ ...prev, medios: "loading" }))
+      await fetchMediosDePago()
+      if (showSync) setSyncSteps(prev => ({ ...prev, medios: "done" }))
+
+      if (showSync) setSyncSteps(prev => ({ ...prev, clientes: "loading" }))
+      await syncClientesIngresos()
+      if (showSync) setSyncSteps(prev => ({ ...prev, clientes: "done" }))
       // console.log(response)
     } catch (error) {
       console.error(error)
-      Alert.alert('Error', 'No se ha podido obtener la configuración.')
+      Alert.alert('Error', 'No se ha podido obtener la configuraciÃ³n.')
+      if (showSync) {
+        setSyncSteps(prev => ({
+          ...prev,
+          config: prev.config === "loading" ? "error" : prev.config,
+          precios: prev.precios === "loading" ? "error" : prev.precios,
+          medios: prev.medios === "loading" ? "error" : prev.medios,
+          clientes: prev.clientes === "loading" ? "error" : prev.clientes,
+        }))
+      }
     } finally {
-      setIsLoading(false)
+      if (showSync) {
+        setSyncDone(true)
+      } else {
+        setIsLoading(false)
+      }
     }
   }
 
@@ -344,7 +434,7 @@ export default function Settings() {
               </TouchableOpacity>
 
               <TouchableOpacity
-                onPress={() => { list() }}
+                onPress={() => { list({ showSync: true }) }}
                 style={[
                   { ...newOrderStyles.btnOptions, ...newOrderStyles.btnSave, ...newOrderStyles.btnData },
                   { width: "100%", marginBottom: 10 }
@@ -383,6 +473,103 @@ export default function Settings() {
           </View>
         </SafeAreaView>
       }
+
+      <Modal
+        transparent
+        visible={showSyncModal}
+        animationType="fade"
+        onRequestClose={() => {
+          if (syncDone) setShowSyncModal(false)
+        }}
+      >
+        <View style={styles.syncBackdrop}>
+          <View style={styles.syncCard}>
+            <Text style={styles.syncTitle}>Sincronizando datos</Text>
+            <Text style={styles.syncSubtitle}>Este proceso puede tardar unos segundos.</Text>
+
+            <View style={styles.syncRow}>
+              <View style={styles.syncIcon}>
+                {syncSteps.config === "loading" ? (
+                  <ActivityIndicator size="small" color="#286A73" />
+                ) : syncSteps.config === "done" ? (
+                  <Ionicons name="checkmark-circle" size={18} color="#2E7D32" />
+                ) : syncSteps.config === "error" ? (
+                  <Ionicons name="close-circle" size={18} color="#D64545" />
+                ) : (
+                  <Ionicons name="ellipse-outline" size={16} color="#999" />
+                )}
+              </View>
+              <Text style={styles.syncText}>ConfiguraciÃ³n</Text>
+              <Text style={styles.syncStatus}>
+                {syncSteps.config === "loading" ? "Sincronizando..." : syncSteps.config === "done" ? "Listo" : syncSteps.config === "error" ? "Error" : "Pendiente"}
+              </Text>
+            </View>
+
+            <View style={styles.syncRow}>
+              <View style={styles.syncIcon}>
+                {syncSteps.precios === "loading" ? (
+                  <ActivityIndicator size="small" color="#286A73" />
+                ) : syncSteps.precios === "done" ? (
+                  <Ionicons name="checkmark-circle" size={18} color="#2E7D32" />
+                ) : syncSteps.precios === "error" ? (
+                  <Ionicons name="close-circle" size={18} color="#D64545" />
+                ) : (
+                  <Ionicons name="ellipse-outline" size={16} color="#999" />
+                )}
+              </View>
+              <Text style={styles.syncText}>Precios</Text>
+              <Text style={styles.syncStatus}>
+                {syncSteps.precios === "loading" ? "Sincronizando..." : syncSteps.precios === "done" ? "Listo" : syncSteps.precios === "error" ? "Error" : "Pendiente"}
+              </Text>
+            </View>
+
+            <View style={styles.syncRow}>
+              <View style={styles.syncIcon}>
+                {syncSteps.medios === "loading" ? (
+                  <ActivityIndicator size="small" color="#286A73" />
+                ) : syncSteps.medios === "done" ? (
+                  <Ionicons name="checkmark-circle" size={18} color="#2E7D32" />
+                ) : syncSteps.medios === "error" ? (
+                  <Ionicons name="close-circle" size={18} color="#D64545" />
+                ) : (
+                  <Ionicons name="ellipse-outline" size={16} color="#999" />
+                )}
+              </View>
+              <Text style={styles.syncText}>Medios de pago</Text>
+              <Text style={styles.syncStatus}>
+                {syncSteps.medios === "loading" ? "Sincronizando..." : syncSteps.medios === "done" ? "Listo" : syncSteps.medios === "error" ? "Error" : "Pendiente"}
+              </Text>
+            </View>
+
+            <View style={styles.syncRow}>
+              <View style={styles.syncIcon}>
+                {syncSteps.clientes === "loading" ? (
+                  <ActivityIndicator size="small" color="#286A73" />
+                ) : syncSteps.clientes === "done" ? (
+                  <Ionicons name="checkmark-circle" size={18} color="#2E7D32" />
+                ) : syncSteps.clientes === "error" ? (
+                  <Ionicons name="close-circle" size={18} color="#D64545" />
+                ) : (
+                  <Ionicons name="ellipse-outline" size={16} color="#999" />
+                )}
+              </View>
+              <Text style={styles.syncText}>Clientes</Text>
+              <Text style={styles.syncStatus}>
+                {syncSteps.clientes === "loading" ? "Sincronizando..." : syncSteps.clientes === "done" ? "Listo" : syncSteps.clientes === "error" ? "Error" : "Pendiente"}
+              </Text>
+            </View>
+
+            {syncDone && (
+              <TouchableOpacity
+                style={styles.syncCloseButton}
+                onPress={() => setShowSyncModal(false)}
+              >
+                <Text style={styles.syncCloseText}>Cerrar</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      </Modal>
 
       <Modal
         transparent
@@ -434,6 +621,65 @@ const styles = StyleSheet.create({
     height: '100%',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  syncBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+  syncCard: {
+    width: "100%",
+    backgroundColor: "white",
+    borderRadius: 12,
+    padding: 20,
+  },
+  syncTitle: {
+    fontFamily: "Poppins-Bold",
+    fontSize: 16,
+    marginBottom: 4,
+  },
+  syncSubtitle: {
+    fontFamily: "Poppins-Regular",
+    fontSize: 12,
+    color: "#666",
+    marginBottom: 12,
+  },
+  syncRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: "#eee",
+  },
+  syncIcon: {
+    width: 26,
+    alignItems: "center",
+    marginRight: 8,
+  },
+  syncText: {
+    flex: 1,
+    fontFamily: "Poppins-Regular",
+    fontSize: 13,
+    color: "#222",
+  },
+  syncStatus: {
+    fontFamily: "Poppins-Regular",
+    fontSize: 12,
+    color: "#666",
+  },
+  syncCloseButton: {
+    marginTop: 14,
+    backgroundColor: "#284473",
+    borderRadius: 8,
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  syncCloseText: {
+    color: "#fff",
+    fontFamily: "Poppins-Bold",
+    fontSize: 13,
   },
   modalBackdrop: {
     flex: 1,

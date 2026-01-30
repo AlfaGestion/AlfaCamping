@@ -47,6 +47,10 @@ export default function Index() {
     const [statsToDate, setStatsToDate] = useState(new Date());
     const [showStatsFrom, setShowStatsFrom] = useState(false);
     const [showStatsTo, setShowStatsTo] = useState(false);
+    const [predioFromDate, setPredioFromDate] = useState(null);
+    const [predioToDate, setPredioToDate] = useState(null);
+    const [showPredioFrom, setShowPredioFrom] = useState(false);
+    const [showPredioTo, setShowPredioTo] = useState(false);
     const [remoteIngresos, setRemoteIngresos] = useState([]);
     const [remoteLoading, setRemoteLoading] = useState(false);
     const [statsWebHeight, setStatsWebHeight] = useState(700);
@@ -58,6 +62,15 @@ export default function Index() {
         setIngresoDate, setIngresoString,
         setEgresoDate, setEgresoString,
     } = useContext(IngresoContext);
+
+    const formatYMD = (date) => {
+        if (!date) return "";
+        const d = new Date(date);
+        const dd = String(d.getDate()).padStart(2, "0");
+        const mm = String(d.getMonth() + 1).padStart(2, "0");
+        const yyyy = d.getFullYear();
+        return `${yyyy}-${mm}-${dd}`;
+    };
 
 
 
@@ -74,9 +87,21 @@ export default function Index() {
             setRemoteLoading(true);
             try {
                 const trimmedSearch = searchText?.trim() ?? "";
-                const endpoint = trimmedSearch
+                const fromParam = predioFromDate ? formatYMD(predioFromDate) : "";
+                const toParam = predioToDate ? formatYMD(predioToDate) : "";
+                const hasDateFilter = Boolean(fromParam || toParam);
+                const dateParams = hasDateFilter ? new URLSearchParams({
+                    ...(fromParam ? { desde: fromParam } : {}),
+                    ...(toParam ? { hasta: toParam } : {}),
+                }).toString() : "";
+
+                let endpoint = trimmedSearch
                     ? `ingresos/ingresospendientes/search?search=${encodeURIComponent(trimmedSearch)}`
                     : "ingresos/ingresospendientes";
+
+                if (hasDateFilter) {
+                    endpoint += trimmedSearch ? `&${dateParams}` : `?${dateParams}`;
+                }
                 const response = await fetchDataFromApi(endpoint);
                 const raw = response?.data ?? response;
                 const data = Array.isArray(raw)
@@ -110,7 +135,7 @@ export default function Index() {
         return () => {
             isActive = false;
         };
-    }, [selectedFilter, netInfo.isConnected, searchText]);
+    }, [selectedFilter, netInfo.isConnected, searchText, predioFromDate, predioToDate]);
 
     const formatIsoDate = (value) => {
         if (!value) return "";
@@ -161,9 +186,6 @@ export default function Index() {
             if (statsMap[primaryKey] !== undefined && statsMap[primaryKey] !== null) return toNumber(statsMap[primaryKey]);
             return toNumber(statsMap[fallbackKey]);
         };
-        const totalMov = getStat("ingresaron", "ingresaron")
-            + getStat("egresaron", "egresaron")
-            + getStat("en_predio", "en_predio");
         const totalPersVisit = getStat("adultos", "adultos") + getStat("menores", "menores") + getStat("jubilados", "jubilados");
         const totalPersLocal = getStat("adultos_l", "adultos_l") + getStat("menores_l", "menores_l") + getStat("jubilados_l", "jubilados_l");
         const totalServVisit = getStat("estacionamientos", "estacionamientos")
@@ -174,8 +196,11 @@ export default function Index() {
             { label: "En el predio", value: getStat("en_predio", "en_predio") },
             { label: "Egresaron", value: getStat("egresaron", "egresaron") },
             { label: "Adultos", value: getStat("adultos", "adultos") },
+            { label: "Adultos L", value: getStat("adultos_l", "adultos_l") },
             { label: "Menores", value: getStat("menores", "menores") },
+            { label: "Menores L", value: getStat("menores_l", "menores_l") },
             { label: "Jubilados", value: getStat("jubilados", "jubilados") },
+            { label: "Jubilados L", value: getStat("jubilados_l", "jubilados_l") },
         ];
         const maxVal = Math.max(1, ...chartItems.map((i) => toNumber(i.value)));
         const chartRows = chartItems
@@ -256,37 +281,37 @@ export default function Index() {
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
   @page { size: 80mm auto; margin: 4mm; }
-  body { font-family: Arial, sans-serif; padding: 0; color: #1f2a44; width: 72mm; margin: 0 auto; font-size: 13px; }
+  body { font-family: Arial, sans-serif; padding: 0; color: #1f2a44; width: 72mm; margin: 0 auto; font-size: 14px; }
   .header { text-align: center; margin-bottom: 10px; }
   .logo { width: 110px; height: 110px; object-fit: contain; margin-bottom: 6px; }
-  .title { font-size: 18px; font-weight: 700; margin: 0; text-transform: uppercase; }
-  .subtitle { font-size: 12px; color: #284473; margin: 4px 0 0; letter-spacing: 0.5px; }
-  .range { font-size: 11px; color: #666; margin: 4px 0 12px; }
+  .title { font-size: 19px; font-weight: 700; margin: 0; text-transform: uppercase; }
+  .subtitle { font-size: 13px; color: #284473; margin: 4px 0 0; letter-spacing: 0.5px; }
+  .range { font-size: 12px; color: #666; margin: 4px 0 12px; }
 
-  .section-title { font-size: 12px; font-weight: 700; color: #284473; margin: 10px 0 6px; text-transform: uppercase; letter-spacing: 0.3px; }
+  .section-title { font-size: 13px; font-weight: 700; color: #284473; margin: 10px 0 6px; text-transform: uppercase; letter-spacing: 0.3px; }
   .card { border: 1px solid #e1e1e1; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; background: #fff; }
-  .card-title { font-size: 13px; font-weight: 700; color: #284473; margin-bottom: 6px; }
+  .card-title { font-size: 14px; font-weight: 700; color: #284473; margin-bottom: 6px; }
   .card-hero { border: 1px solid #d7e3f3; border-radius: 10px; padding: 12px; margin-bottom: 10px; background: #f5f9ff; }
   .section-sep { height: 1px; background: #e6e6e6; margin: 8px 0 10px; }
 
   .hero-top { display: flex; justify-content: space-between; align-items: baseline; }
-  .hero-title { font-size: 12px; color: #284473; margin: 0; text-transform: uppercase; letter-spacing: 0.4px; }
-  .hero-value { font-size: 28px; font-weight: 800; color: #1f2a44; }
+  .hero-title { font-size: 13px; color: #284473; margin: 0; text-transform: uppercase; letter-spacing: 0.4px; }
+  .hero-value { font-size: 30px; font-weight: 800; color: #1f2a44; }
   .hero-subline { border-top: 1px solid #dde6f2; margin-top: 8px; padding-top: 8px; }
 
-  .row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px dashed #eef0f4; font-size: 12.5px; }
+  .row { display: flex; justify-content: space-between; padding: 7px 0; border-bottom: 1px dashed #eef0f4; font-size: 13.5px; }
   .row:last-child { border-bottom: none; }
   .total { font-weight: 700; padding-top: 6px; margin-top: 6px; border-top: 1px solid #e6e6e6; }
   .label-strong { font-weight: 700; color: #1f2a44; }
 
   .mini-sep { height: 1px; background: #e6e6e6; margin: 6px 0; }
   .chart { border: 1px solid #e1e1e1; border-radius: 8px; padding: 14px 14px; margin-bottom: 10px; }
-  .chart-row { display: grid; grid-template-columns: 100px 1fr 40px; gap: 8px; align-items: center; margin-bottom: 6px; font-size: 13.5px; }
+  .chart-row { display: grid; grid-template-columns: 110px 1fr 46px; gap: 10px; align-items: center; margin-bottom: 8px; font-size: 15px; }
   .chart-label { color: #333; }
-  .chart-bar { height: 10px; background: #eef3fb; border-radius: 6px; overflow: hidden; }
+  .chart-bar { height: 12px; background: #eef3fb; border-radius: 8px; overflow: hidden; }
   .chart-fill { height: 100%; background: #f5a623; }
-  .chart-value { text-align: right; color: #284473; font-weight: 700; }
-  .mp-grid { display: grid; grid-template-columns: 1fr 56px 84px; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px dashed #eef0f4; font-size: 13px; }
+  .chart-value { text-align: right; color: #284473; font-weight: 700; font-size: 14.5px; }
+  .mp-grid { display: grid; grid-template-columns: 1fr 60px 90px; gap: 10px; align-items: center; padding: 9px 0; border-bottom: 1px dashed #eef0f4; font-size: 14px; }
   .mp-grid:last-child { border-bottom: none; }
   .mp-head { font-weight: 700; color: #284473; border-bottom: 1px solid #e6e6e6; padding-bottom: 8px; }
   .mp-total { font-weight: 700; border-top: 1px solid #e6e6e6; margin-top: 6px; padding-top: 8px; }
@@ -323,7 +348,6 @@ export default function Index() {
     <div class="row"><span class="label-strong">Ingresaron</span><span>${getStat("ingresaron", "ingresaron")}</span></div>
     <div class="row"><span class="label-strong">Egresaron</span><span>${getStat("egresaron", "egresaron")}</span></div>
     <div class="row"><span class="label-strong">En el predio</span><span>${getStat("en_predio", "en_predio")}</span></div>
-    <div class="row total"><span>Total</span><span>${totalMov}</span></div>
 
     <div class="mini-sep"></div>
 
@@ -385,15 +409,6 @@ export default function Index() {
         } catch (e) {
             // noop
         }
-    };
-
-    const formatYMD = (date) => {
-        if (!date) return "";
-        const d = new Date(date);
-        const dd = String(d.getDate()).padStart(2, "0");
-        const mm = String(d.getMonth() + 1).padStart(2, "0");
-        const yyyy = d.getFullYear();
-        return `${yyyy}-${mm}-${dd}`;
     };
 
     useEffect(() => {
@@ -651,6 +666,71 @@ export default function Index() {
 
             {selectedFilter !== FILTERS.COMPLETOS && (
                 <>
+            {isTodos && (
+                <View style={styles.predioDateContainer}>
+                    <View style={styles.dateRow}>
+                        <View style={styles.dateCol}>
+                            <InputDate
+                                title="Desde"
+                                placeholder="Todos"
+                                value={predioFromDate ? formatDate(predioFromDate, true) : ""}
+                                callback={() => setShowPredioFrom(true)}
+                            />
+                        </View>
+                        <View style={styles.dateCol}>
+                            <InputDate
+                                title="Hasta"
+                                placeholder="Todos"
+                                value={predioToDate ? formatDate(predioToDate, true) : ""}
+                                callback={() => setShowPredioTo(true)}
+                            />
+                        </View>
+                    </View>
+                    {(predioFromDate || predioToDate) && (
+                        <TouchableOpacity
+                            style={styles.clearDateButton}
+                            onPress={() => {
+                                setPredioFromDate(null);
+                                setPredioToDate(null);
+                            }}
+                        >
+                            <Text style={styles.clearDateText}>Limpiar fechas</Text>
+                        </TouchableOpacity>
+                    )}
+                </View>
+            )}
+
+            {isTodos && showPredioFrom && (
+                <DateTimePicker
+                    value={predioFromDate ?? new Date()}
+                    mode="date"
+                    onChange={(event, selectedDate) => {
+                        if (event.type === "dismissed") { setShowPredioFrom(false); return; }
+                        const current = selectedDate || predioFromDate || new Date();
+                        setShowPredioFrom(false);
+                        setPredioFromDate(current);
+                        if (predioToDate && current > predioToDate) {
+                            setPredioToDate(current);
+                        } else if (!predioToDate) {
+                            setPredioToDate(new Date());
+                        }
+                    }}
+                />
+            )}
+
+            {isTodos && showPredioTo && (
+                <DateTimePicker
+                    value={predioToDate ?? predioFromDate ?? new Date()}
+                    mode="date"
+                    onChange={(event, selectedDate) => {
+                        if (event.type === "dismissed") { setShowPredioTo(false); return; }
+                        const current = selectedDate || predioToDate || new Date();
+                        setShowPredioTo(false);
+                        setPredioToDate(current);
+                    }}
+                />
+            )}
+
             <View style={{ paddingHorizontal: 30, marginTop: 10 }}>
                 {/* ------------------- INPUT DE BÚSQUEDA ------------------- */}
                 <View style={styles.searchInputWrapper}>
@@ -879,6 +959,21 @@ const styles = StyleSheet.create({
     },
     dateCol: {
         flex: 1,
+    },
+    predioDateContainer: {
+        paddingHorizontal: 30,
+        marginTop: 10,
+    },
+    clearDateButton: {
+        marginTop: 6,
+        alignSelf: "flex-start",
+        paddingVertical: 4,
+        paddingHorizontal: 6,
+    },
+    clearDateText: {
+        fontSize: 12,
+        color: "#284473",
+        fontFamily: "Poppins-Regular",
     },
     statsLoading: {
         paddingVertical: 20,

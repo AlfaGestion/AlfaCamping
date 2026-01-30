@@ -107,7 +107,10 @@ export default function New() {
         return;
       }
 
-      if (!netInfo.isConnected) return;
+      if (!netInfo.isConnected) {
+        Alert.alert("Sin conexión", "No hay internet para buscar el cliente en el servidor.");
+        return;
+      }
 
       const [apiRow] = await configDb.getConfigValue("api_uri");
       const [tokenRow] = await configDb.getConfigValue("TOKEN");
@@ -119,7 +122,7 @@ export default function New() {
       const baseUrl = apiUri.endsWith("/") ? apiUri : `${apiUri}/`;
       const endpoint = `${CLIENTE_LOOKUP_ENDPOINT}?dni=${encodeURIComponent(dniSeleccionado)}`;
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 1500);
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
 
       const response = await fetch(`${baseUrl}${endpoint}`, {
         method: "GET",
@@ -163,9 +166,14 @@ export default function New() {
         setIngreso((prev) => ({ ...prev, ...updates }));
         setClientes([]);
         Keyboard.dismiss();
+        Alert.alert("Encontrado en servidor", "Se encontró el cliente en la API. Recordá sincronizar los últimos datos.");
       }
     } catch (error) {
-      // Ignorar errores de red o tiempo de espera.
+      if (error?.name === "AbortError") {
+        Alert.alert("Conexión lenta", "La búsqueda en el servidor tardó demasiado. Intente nuevamente.");
+      } else {
+        Alert.alert("Error", "No se pudo buscar el cliente en el servidor.");
+      }
     } finally {
       setClientesLoading(false);
     }
