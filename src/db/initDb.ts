@@ -1,12 +1,5 @@
 import { type SQLiteDatabase } from "expo-sqlite";
 
-const API_URI = process.env.EXPO_PUBLIC_API_URI;
-const USERNAME = process.env.EXPO_PUBLIC_USERNAME;
-const PASSWORD = process.env.EXPO_PUBLIC_PASSWORD;
-const CUSTOMER_ID = process.env.EXPO_PUBLIC_CUSTOMER_ID;
-const DATABASE_ID = process.env.EXPO_PUBLIC_DATABASE_ID;
-const PRINTER_IP = process.env.EXPO_PUBLIC_IP_IMP_BARRERA;
-
 export async function initDb(db: SQLiteDatabase) {
   // 1. Tabla de Configuración
   await db.execAsync(`
@@ -16,12 +9,13 @@ export async function initDb(db: SQLiteDatabase) {
   const resConfig: any = await db.getAllAsync("SELECT COUNT(*) as count FROM configuracion;");
   if (resConfig[0].count === 0) {
     await db.execAsync(`
-      INSERT INTO configuracion (clave, valor) VALUES ('api_uri', '${API_URI}');
-      INSERT INTO configuracion (clave, valor) VALUES ('username', '${USERNAME}');
-      INSERT INTO configuracion (clave, valor) VALUES ('password', '${PASSWORD}');
-      INSERT INTO configuracion (clave, valor) VALUES ('customer_id', '${CUSTOMER_ID}');
-      INSERT INTO configuracion (clave, valor) VALUES ('database_id', '${DATABASE_ID}');
-      INSERT INTO configuracion (clave, valor) VALUES ('cfg_impresora_barrera_1', '${PRINTER_IP}');
+      INSERT INTO configuracion (clave, valor) VALUES ('api_uri', '');
+      INSERT INTO configuracion (clave, valor) VALUES ('username', '');
+      INSERT INTO configuracion (clave, valor) VALUES ('password', '');
+      INSERT INTO configuracion (clave, valor) VALUES ('customer_id', '');
+      INSERT INTO configuracion (clave, valor) VALUES ('database_id', '');
+      INSERT INTO configuracion (clave, valor) VALUES ('cfg_impresora_barrera_1', '');
+      INSERT INTO configuracion (clave, valor) VALUES ('print_offset_mm', '');
     `);
   }
 
@@ -69,10 +63,21 @@ export async function initDb(db: SQLiteDatabase) {
   await db.execAsync(
     "CREATE TABLE IF NOT EXISTS mediosDePago (codigo TEXT PRIMARY KEY, descripcion TEXT)"
   );
+  await db.execAsync(
+    "CREATE TABLE IF NOT EXISTS mediosDePago_backup (codigo TEXT PRIMARY KEY, descripcion TEXT)"
+  );
 
   // 5. Tabla de Precios (Aseguramos que se cree correctamente)
   await db.execAsync(`
     CREATE TABLE IF NOT EXISTS precios (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, 
+      codigo TEXT UNIQUE NOT NULL, 
+      precio REAL DEFAULT 0, 
+      descripcion TEXT
+    );
+  `);
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS precios_backup (
       id INTEGER PRIMARY KEY AUTOINCREMENT, 
       codigo TEXT UNIQUE NOT NULL, 
       precio REAL DEFAULT 0, 

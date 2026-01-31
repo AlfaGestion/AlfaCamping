@@ -104,6 +104,8 @@ const IngresoContextProvider = ({ children }) => {
   const menoresRef = useRef(null)
   const jubiladosRef = useRef(null)
   const observacionesRef = useRef(null)
+  const isFetchingPrecios = useRef(false)
+  const isFetchingMedios = useRef(false)
 
 
   const [dniRefresh, setDniRefresh] = useState(0)
@@ -142,6 +144,8 @@ const IngresoContextProvider = ({ children }) => {
   }
 
   const fetchPrecios = async () => {
+    if (isFetchingPrecios.current) return false;
+    isFetchingPrecios.current = true;
     if (!netInfo.isConnected) {
       if (!warnedEmptyPrices) {
         const allPrices = await preciosDb.getAll();
@@ -150,11 +154,13 @@ const IngresoContextProvider = ({ children }) => {
           notifyEmptyPrices();
         }
       }
-      return;
+      isFetchingPrecios.current = false;
+      return false;
     }
     try {
       const data = await fetchDataFromApi('ingresos/precios');
       //console.log(data.data)  //25-01-2026
+      if (!data || data?.error) return false;
       
       if (data?.data) {
         const passwordItem = data.data.find(item => item?.CLAVE === "ING_CLAVEVACIARBASE");
@@ -169,55 +175,153 @@ const IngresoContextProvider = ({ children }) => {
         // 2. Traemos la lista actualizada de la DB local
         const allPrices = await preciosDb.getAll();
         setPrecios(allPrices);
+        if (allPrices && allPrices.length > 0) {
+          await preciosDb.saveBackup(allPrices);
+        }
         if ((!allPrices || allPrices.length === 0) && !warnedEmptyPrices) {
           setWarnedEmptyPrices(true);
           notifyEmptyPrices();
         }
+        return true;
       }
+      return false;
     } catch (error) {
       console.error("Error fetching precios:", error);
+      return false;
+    } finally {
+      isFetchingPrecios.current = false;
     }
   };
 
   const fetchMediosDePago = async () => {
-    if (!netInfo.isConnected) return;
-    const data = await fetchDataFromApi('ingresos/medios_de_pago')
+    if (isFetchingMedios.current) return false;
+    isFetchingMedios.current = true;
+    try {
+      let okRemote = false;
+      let attemptedRemote = false;
+      if (netInfo.isConnected) {
+        attemptedRemote = true;
+        const data = await fetchDataFromApi('ingresos/medios_de_pago')
 
-    if (data?.data) {
-      await mediosDePagoDb.deleteAll()
-      await mediosDePagoDb.createOrUpdate(data.data)
+        if (!data || data?.error) {
+          okRemote = false;
+        } else if (data?.data) {
+          await mediosDePagoDb.deleteAll()
+          await mediosDePagoDb.createOrUpdate(data.data)
+          okRemote = true;
+
+          if (data.status_code == 200) {
+            // Toast.show({
+            //   type: "success",
+            //   text1: "Medios de pago actualizados.",
+            //   text2: "",
+            //   visibilityTime: 1777,
+            //   position: "bottom",
+            //   autoHide: true,
+            //   bottomOffset: 120,
+            //   text1Style: { fontFamily: "Poppins-Bold", fontSize: 15 },
+            //   text2Style: { fontFamily: "Poppins-Regular", fontSize: 13 },
+            //   swipeable: true,
+            // })
+            null
+          } else {
+            Toast.show({
+              type: "error",
+              text1: "Error al actualizar los medios de pago.",
+              text2: "",
+              visibilityTime: 1777,
+              position: "bottom",
+              autoHide: true,
+              bottomOffset: 120,
+              text1Style: { fontFamily: "Poppins-Bold", fontSize: 15 },
+              text2Style: { fontFamily: "Poppins-Regular", fontSize: 13 },
+              swipeable: true,
+            })
+            okRemote = false;
+          }
+        }
+      }
+
+      let allMP = await mediosDePagoDb.getAll()
+      if (!allMP || allMP.length === 0) {
+        await mediosDePagoDb.ensureDefaults()
+        allMP = await mediosDePagoDb.getAll()
+      }
+      setMediosDePago(allMP)
+      if (okRemote && allMP && allMP.length > 0) {
+        await mediosDePagoDb.saveBackup(allMP)
+      }
+      return attemptedRemote ? okRemote : false;
+    } finally {
+      isFetchingMedios.current = false;
+    }
+  }
+
+  const hasPreciosBackup = async () => {
+    try {
+      const backup = await preciosDb.getBackupAll()
+      return Array.isArray(backup) && backup.length > 0
+    } catch (error) {
+      console.error(error)
+      return false
+    }
+  }
+
+  const hasMediosBackup = async () => {
+    try {
+      const backup = await mediosDePagoDb.getBackupAll()
+      return Array.isArray(backup) && backup.length > 0
+    } catch (error) {
+      console.error(error)
+      return false
+    }
+  }
+
+  const restorePreciosFromBackup = async () => {
+    try {
+      const restored = await preciosDb.restoreFromBackup()
+      if (!restored) return false
+
+      const allPrices = await preciosDb.getAll()
+      setPrecios(allPrices)
+      return true
+    } catch (error) {
+      console.error(error)
+      Toast.show({
+        type: "error",
+        text1: "Error al recuperar precios",
+        text2: "No se pudieron restaurar los precios.",
+        position: "bottom",
+        bottomOffset: 120,
+        autoHide: true,
+        text1Style: { fontFamily: "Poppins-Bold", fontSize: 15 },
+        text2Style: { fontFamily: "Poppins-Regular", fontSize: 13 },
+      })
+      return false
+    }
+  }
+
+  const restoreMediosDePagoFromBackup = async () => {
+    try {
+      const restored = await mediosDePagoDb.restoreFromBackup()
+      if (!restored) return false
 
       const allMP = await mediosDePagoDb.getAll()
       setMediosDePago(allMP)
-
-      if (data.status_code == 200) {
-        // Toast.show({
-        //   type: "success",
-        //   text1: "Medios de pago actualizados.",
-        //   text2: "",
-        //   visibilityTime: 1777,
-        //   position: "bottom",
-        //   autoHide: true,
-        //   bottomOffset: 120,
-        //   text1Style: { fontFamily: "Poppins-Bold", fontSize: 15 },
-        //   text2Style: { fontFamily: "Poppins-Regular", fontSize: 13 },
-        //   swipeable: true,
-        // })
-        null
-      } else {
-        Toast.show({
-          type: "error",
-          text1: "Error al actualizar los medios de pago.",
-          text2: "",
-          visibilityTime: 1777,
-          position: "bottom",
-          autoHide: true,
-          bottomOffset: 120,
-          text1Style: { fontFamily: "Poppins-Bold", fontSize: 15 },
-          text2Style: { fontFamily: "Poppins-Regular", fontSize: 13 },
-          swipeable: true,
-        })
-      }
+      return true
+    } catch (error) {
+      console.error(error)
+      Toast.show({
+        type: "error",
+        text1: "Error al recuperar medios de pago",
+        text2: "No se pudieron restaurar los medios de pago.",
+        position: "bottom",
+        bottomOffset: 120,
+        autoHide: true,
+        text1Style: { fontFamily: "Poppins-Bold", fontSize: 15 },
+        text2Style: { fontFamily: "Poppins-Regular", fontSize: 13 },
+      })
+      return false
     }
   }
 
@@ -1335,7 +1439,9 @@ const IngresoContextProvider = ({ children }) => {
         mediosDePago, setMediosDePago,
         anulled,
 
-        fetchPrecios, fetchMediosDePago
+        fetchPrecios, fetchMediosDePago,
+        restorePreciosFromBackup, restoreMediosDePagoFromBackup,
+        hasPreciosBackup, hasMediosBackup
       }}
     >
       {children}

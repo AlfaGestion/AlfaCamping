@@ -1,7 +1,7 @@
-import { useState, useEffect, useContext, useMemo, useCallback } from "react";
+import { useState, useEffect, useContext, useMemo, useCallback, useRef } from "react";
 import {
   Text, View, TextInput, ScrollView, TouchableOpacity,
-  KeyboardAvoidingView, TouchableWithoutFeedback, Keyboard, Alert, StyleSheet, BackHandler
+  KeyboardAvoidingView, TouchableWithoutFeedback, Keyboard, Alert, StyleSheet, BackHandler, ActivityIndicator
 } from "react-native";
 import { Picker } from '@react-native-picker/picker';
 import { useRouter } from "expo-router";
@@ -13,6 +13,7 @@ import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 
 import { IngresoContext } from "@/context/IngresoContext";
+import { useConfigDb } from "@/db/useConfigDb";
 import Colors from "@/styles/Colors";
 import { buildIngresoHtml } from "@/utils/ingresoPrint";
 import { parseNumber } from "@/utils/Utils";
@@ -51,12 +52,11 @@ export default function NewTaskScreen() {
     ingreso, setIngreso, mediosDePago,
     fetchPrecios, fetchMediosDePago, handleSaveIngreso,
     precios: preciosArr,
+    restorePreciosFromBackup, restoreMediosDePagoFromBackup,
+    hasPreciosBackup, hasMediosBackup,
   } = useContext(IngresoContext);
-
-  useEffect(() => {
-    fetchPrecios();
-    fetchMediosDePago();
-  }, []);
+  const configDb = useConfigDb();
+  const [printOffsetMm, setPrintOffsetMm] = useState("");
 
   useFocusEffect(useCallback(() => {
     const onBackPress = () => {
@@ -136,6 +136,90 @@ export default function NewTaskScreen() {
     return p;
   }, [preciosArr, isSameDay]);
 
+  const preciosVacios = useMemo(() => {
+    if (!Array.isArray(preciosArr) || preciosArr.length === 0) return true;
+    return preciosArr.every(item => !Number(item.precio));
+  }, [preciosArr]);
+
+  const mediosVacios = useMemo(() => {
+    return !Array.isArray(mediosDePago) || mediosDePago.length === 0;
+  }, [mediosDePago]);
+
+  const preciosFetchAttempted = useRef(false);
+  const mediosFetchAttempted = useRef(false);
+
+  const [hasBackup, setHasBackup] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const restoreAttempted = useRef(false);
+
+  useEffect(() => {
+    // No consultar API en esta pantalla salvo que estÃ© todo en 0/vacÃ­o
+    if (preciosVacios && !preciosFetchAttempted.current) {
+      preciosFetchAttempted.current = true;
+      setIsSyncing(true);
+      fetchPrecios().finally(() => {
+        setIsSyncing(false);
+      });
+    }
+    if (mediosVacios && !mediosFetchAttempted.current) {
+      mediosFetchAttempted.current = true;
+      setIsSyncing(true);
+      fetchMediosDePago().finally(() => {
+        setIsSyncing(false);
+      });
+    }
+  }, [preciosVacios, mediosVacios, fetchPrecios, fetchMediosDePago]);
+
+  useEffect(() => {
+    const tryRestore = async () => {
+      if (!hasBackup) return;
+      if (!preciosVacios && !mediosVacios) return;
+      if (preciosVacios && !preciosFetchAttempted.current) return;
+      if (mediosVacios && !mediosFetchAttempted.current) return;
+      if (restoreAttempted.current) return;
+      restoreAttempted.current = true;
+      setIsSyncing(true);
+      await restorePreciosFromBackup();
+      await restoreMediosDePagoFromBackup();
+      setIsSyncing(false);
+    };
+    tryRestore();
+  }, [hasBackup, preciosVacios, mediosVacios, restorePreciosFromBackup, restoreMediosDePagoFromBackup]);
+
+  useEffect(() => {
+    let mounted = true;
+    const checkBackup = async () => {
+      const [p, m] = await Promise.all([hasPreciosBackup(), hasMediosBackup()]);
+      if (mounted) setHasBackup(Boolean(p || m));
+    };
+    checkBackup();
+    return () => { mounted = false; };
+  }, [hasPreciosBackup, hasMediosBackup]);
+
+  useEffect(() => {
+    let mounted = true;
+    const loadOffset = async () => {
+      try {
+        const [row] = await configDb.getConfigValue("print_offset_mm");
+        const value = row?.valor ?? "";
+        if (mounted) setPrintOffsetMm(value);
+      } catch (error) {
+        // ignore
+      }
+    };
+    loadOffset();
+    return () => { mounted = false; };
+  }, [configDb]);
+
+  const handleRestoreBackup = async () => {
+    const restoredPrices = await restorePreciosFromBackup();
+    const restoredMedios = await restoreMediosDePagoFromBackup();
+
+    if (!restoredPrices && !restoredMedios) {
+      Alert.alert("AtenciÃ³n", "No hay backup para restaurar.");
+    }
+  };
+
   // --- LÓGICA DE CÁLCULOS ---
   const counts = useMemo(() => {
     const personasKeys = ["adultos", "menores", "jubilados"];
@@ -173,6 +257,12 @@ export default function NewTaskScreen() {
   const estadiaLabel = isSameDay ? "DÍAS" : "NOCHES";
 
   const onSave = async () => {
+    if (preciosVacios) {
+      return Alert.alert(
+        "Atención",
+        "Los precios no están cargados. Espere a que se sincronicen o use Recuperar."
+      );
+    }
     if (!ingreso.medio_de_pago) return Alert.alert("Atención", "Seleccione medio de pago");
 
     try {
@@ -202,6 +292,7 @@ export default function NewTaskScreen() {
     return buildIngresoHtml(ingresoPrint, {
       totalOverride: totalFinal,
       estacionamientoPrecio,
+      printOffsetMm,
     });
   };
 
@@ -235,10 +326,18 @@ export default function NewTaskScreen() {
     <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
       <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
         <ScrollView style={styles.container}>
-          <TouchableOpacity onPress={handleBackToInfo} style={styles.backButton}>
-            <Ionicons name="chevron-back-circle-outline" size={22} color={Colors.DBLUE} />
-            <Text style={styles.backButtonText}>ATRAS</Text>
-          </TouchableOpacity>
+          <View style={styles.headerRow}>
+            <TouchableOpacity onPress={handleBackToInfo} style={styles.backButton}>
+              <Ionicons name="chevron-back-circle-outline" size={22} color={Colors.DBLUE} />
+              <Text style={styles.backButtonText}>ATRAS</Text>
+            </TouchableOpacity>
+            {isSyncing && (
+              <View style={styles.syncBadge}>
+                <ActivityIndicator size="small" color="#fff" />
+                <Text style={styles.syncBadgeText}>Sincronizando...</Text>
+              </View>
+            )}
+          </View>
           <View style={styles.row}>
             {renderCounterColumn(false)}
             {renderCounterColumn(true)}
@@ -440,8 +539,11 @@ const styles = StyleSheet.create({
   estacionamientoOptionLabel: { fontSize: 14, color: '#555' },
   btnSave: { flexDirection: 'row', height: 60, borderRadius: 15, alignItems: 'center', justifyContent: 'center', marginVertical: 10 },
   btnSaveText: { color: 'white', fontSize: 18, fontWeight: 'bold', marginLeft: 10 },
-  backButton: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 },
-  backButtonText: { color: Colors.DBLUE, fontSize: 16, fontWeight: 'bold' }
+  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
+  backButton: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  backButtonText: { color: Colors.DBLUE, fontSize: 16, fontWeight: 'bold' },
+  syncBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, height: 32, borderRadius: 10, backgroundColor: "#4A90E2" },
+  syncBadgeText: { color: "white", fontSize: 12, fontWeight: "bold" }
 });
 
 

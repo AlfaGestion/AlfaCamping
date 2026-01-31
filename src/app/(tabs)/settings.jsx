@@ -39,10 +39,13 @@ export default function Settings() {
     medios: "pending",
     clientes: "pending",
   })
+  const [preciosEnCero, setPreciosEnCero] = useState(false)
+  const [hasBackup, setHasBackup] = useState(false)
 
   const {
     isLoading: isLoadingIngresos,
-    fetchPrecios, fetchMediosDePago, list: listIngresos,
+    fetchPrecios, fetchMediosDePago, list: listIngresos, setPrecios, setMediosDePago,
+    restorePreciosFromBackup, restoreMediosDePagoFromBackup, hasPreciosBackup, hasMediosBackup,
   } = useContext(IngresoContext);
 
   const {
@@ -56,6 +59,7 @@ export default function Settings() {
     customerId, setCustomerId,
     databaseId, setDatabaseId,
     printerIp, setPrinterIp,
+    printOffsetMm, setPrintOffsetMm,
 
     apiRef, userRef, passRef, customerRef, dbRef,
     apiRefresh, userRefresh, passRefresh, customerRefresh, dbRefresh,
@@ -135,17 +139,48 @@ export default function Settings() {
       if (showSync) setSyncSteps(prev => ({ ...prev, config: "done" }))
 
       if (showSync) {
+        await configDb.setConfigValue("TOKEN", "")
+
         setSyncSteps(prev => ({ ...prev, precios: "loading" }))
-        await fetchPrecios()
-        setSyncSteps(prev => ({ ...prev, precios: "done" }))
+        try {
+          const preciosOk = await fetchPrecios()
+          if (!preciosOk) {
+            setSyncSteps(prev => ({ ...prev, precios: "error", medios: "error", clientes: "error" }))
+            setSyncDone(true)
+            return
+          }
+          setSyncSteps(prev => ({ ...prev, precios: "done" }))
+        } catch (e) {
+          console.error(e)
+          setSyncSteps(prev => ({ ...prev, precios: "error", medios: "error", clientes: "error" }))
+          setSyncDone(true)
+          return
+        }
 
         setSyncSteps(prev => ({ ...prev, medios: "loading" }))
-        await fetchMediosDePago()
-        setSyncSteps(prev => ({ ...prev, medios: "done" }))
+        try {
+          const mediosOk = await fetchMediosDePago()
+          if (!mediosOk) {
+            setSyncSteps(prev => ({ ...prev, medios: "error", clientes: "error" }))
+            setSyncDone(true)
+            return
+          }
+          setSyncSteps(prev => ({ ...prev, medios: "done" }))
+        } catch (e) {
+          console.error(e)
+          setSyncSteps(prev => ({ ...prev, medios: "error", clientes: "error" }))
+          setSyncDone(true)
+          return
+        }
 
         setSyncSteps(prev => ({ ...prev, clientes: "loading" }))
-        await syncClientesIngresos()
-        setSyncSteps(prev => ({ ...prev, clientes: "done" }))
+        try {
+          await syncClientesIngresos()
+          setSyncSteps(prev => ({ ...prev, clientes: "done" }))
+        } catch (e) {
+          console.error(e)
+          setSyncSteps(prev => ({ ...prev, clientes: "error" }))
+        }
       }
       // console.log(response)
     } catch (error) {
@@ -169,6 +204,29 @@ export default function Settings() {
     }
   }
 
+  const handleRestoreBackup = async () => {
+    const [hasP, hasM] = await Promise.all([hasPreciosBackup(), hasMediosBackup()]);
+    if (!hasP && !hasM) {
+      return Alert.alert("Atención", "No hay backup para restaurar.");
+    }
+
+    const restoredPrices = await restorePreciosFromBackup();
+    const restoredMedios = await restoreMediosDePagoFromBackup();
+    if (restoredPrices || restoredMedios) {
+      Toast.show({
+        type: "success",
+        text1: "Backup restaurado",
+        text2: "Se recuperaron precios y medios de pago.",
+        visibilityTime: 1777,
+        position: "bottom",
+        bottomOffset: 120,
+        text1Style: { fontFamily: "Poppins-Bold", fontSize: 15 },
+        text2Style: { fontFamily: "Poppins-Regular", fontSize: 13 },
+        swipeable: true,
+      })
+    }
+  }
+
   const createOrUpdate = async () => {
     setIsLoading(true)
 
@@ -185,6 +243,8 @@ export default function Settings() {
       await configDb.createOrUpdate({ clave: 'customer_id', valor: customerId })
       await configDb.createOrUpdate({ clave: 'database_id', valor: databaseId })
       await configDb.createOrUpdate({ clave: 'cfg_impresora_barrera_1', valor: printerIp })
+      await configDb.createOrUpdate({ clave: 'print_offset_mm', valor: printOffsetMm })
+      await configDb.setConfigValue("TOKEN", "")
 
       list()
 
@@ -223,8 +283,11 @@ export default function Settings() {
               await clienteDb.deleteAll()
               await mediosDb.deleteAll()
               await preciosDb.deleteAll()
+              setPrecios([])
+              setMediosDePago([])
 
               if (netInfo.isConnected) {
+                await configDb.setConfigValue("TOKEN", "")
                 await fetchPrecios()
                 await fetchMediosDePago()
               }
@@ -287,6 +350,7 @@ export default function Settings() {
     const customerId = config.find(item => item.clave === "customer_id")?.valor
     const databaseId = config.find(item => item.clave === "database_id")?.valor
     const printerIp = config.find(item => item.clave === "cfg_impresora_barrera_1")?.valor
+    const printOffsetMm = config.find(item => item.clave === "print_offset_mm")?.valor
 
     setApiUri(apiUri)
     setUsername(username)
@@ -294,6 +358,7 @@ export default function Settings() {
     setCustomerId(customerId)
     setDatabaseId(databaseId)
     setPrinterIp(printerIp)
+    setPrintOffsetMm(printOffsetMm)
   }
 
   useEffect(() => {
@@ -303,6 +368,29 @@ export default function Settings() {
   useEffect(() => {
     list()
   }, [])
+
+  useEffect(() => {
+    let mounted = true
+    const checkPrecios = async () => {
+      const all = await preciosDb.getAll()
+      const enCero = !all || all.length === 0 || all.every(item => !Number(item.precio))
+      if (mounted) setPreciosEnCero(enCero)
+    }
+    checkPrecios()
+    return () => { mounted = false }
+  }, [preciosDb])
+
+  useEffect(() => {
+    let mounted = true
+    const checkBackup = async () => {
+      const [hasP, hasM] = await Promise.all([hasPreciosBackup(), hasMediosBackup()])
+      if (mounted) setHasBackup(Boolean(hasP || hasM))
+    }
+    checkBackup()
+    return () => { mounted = false }
+  }, [hasPreciosBackup, hasMediosBackup])
+
+  const hasSyncError = Object.values(syncSteps).some((status) => status === "error")
 
   return (
     <>
@@ -428,6 +516,18 @@ export default function Settings() {
                 />
               </View> */}
 
+              <View style={[newTaskStyles.element]}>
+                <Text style={[newTaskStyles.label]}>Configurar alineamiento de impresion</Text>
+                <TextInput
+                  style={[newTaskStyles.textInput]}
+                  placeholder="0"
+                  value={printOffsetMm}
+                  onChangeText={setPrintOffsetMm}
+                  keyboardType='numeric'
+                  cursorColor="#C0C0C0"
+                />
+              </View>
+
               <TouchableOpacity
                 onPress={() => { createOrUpdate() }}
                 style={[
@@ -449,6 +549,26 @@ export default function Settings() {
                 <Ionicons name="download-outline" color="white" size={18} />
                 <Text style={[newOrderStyles.textBtnOptions]}>Traer últimos datos</Text>
               </TouchableOpacity>
+
+              {preciosEnCero && (
+                <Text style={[newTaskStyles.label, { marginBottom: 6 }]}>
+                  {hasBackup
+                    ? "Se encontraron precios en 0. Podés restaurar un backup."
+                    : "Se encontraron precios en 0. Debe sincronizar."}
+                </Text>
+              )}
+              {preciosEnCero && hasBackup && (
+                <TouchableOpacity
+                  onPress={handleRestoreBackup}
+                  style={[
+                    { ...newOrderStyles.btnOptions, backgroundColor: "#4A90E2" },
+                    { width: "100%", marginBottom: 10 }
+                  ]}
+                >
+                  <Ionicons name="refresh" color="white" size={18} />
+                  <Text style={[newOrderStyles.textBtnOptions]}>Restaurar backup</Text>
+                </TouchableOpacity>
+              )}
 
               <TouchableOpacity
                 onPress={() => router.push("ingresos/priceSettings")} // O la ruta que definas en expo-router
@@ -565,7 +685,7 @@ export default function Settings() {
               </Text>
             </View>
 
-            {syncDone && (
+            {(syncDone || hasSyncError) && (
               <TouchableOpacity
                 style={styles.syncCloseButton}
                 onPress={() => setShowSyncModal(false)}

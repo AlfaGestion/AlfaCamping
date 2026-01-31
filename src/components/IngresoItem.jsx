@@ -1,4 +1,4 @@
-import { useContext } from "react";
+import { useContext, useEffect, useState } from "react";
 import { Alert, Image, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useRouter } from "expo-router";
 import * as Print from 'expo-print';
@@ -9,12 +9,14 @@ import imgTask from "@/icons/orders.png";
 import { IngresoContext } from "@/context/IngresoContext";
 import { useIngresoDb } from "@/db/useIngresoDb";
 import { useClienteDb } from "@/db/useClienteDb";
+import { useConfigDb } from "@/db/useConfigDb";
 import { buildIngresoHtml, getIngresoNombre } from "@/utils/ingresoPrint";
 
 export default function IngresoItem(props) {
   const { setIngreso, setIsEditIngreso, setIngresoString, setEgresoString, list } = useContext(IngresoContext);
   const ingresoDb = useIngresoDb();
   const clienteDb = useClienteDb();
+  const configDb = useConfigDb();
   const router = useRouter();
   const id = props.id;
   const isRemote = !!props.remote;
@@ -27,8 +29,28 @@ export default function IngresoItem(props) {
 
   const nombreVisitante = getIngresoNombre(props);
 
+  const [printOffsetMm, setPrintOffsetMm] = useState("");
+
+  useEffect(() => {
+    let mounted = true;
+    const loadOffset = async () => {
+      try {
+        const [row] = await configDb.getConfigValue("print_offset_mm");
+        const value = row?.valor ?? "";
+        if (mounted) setPrintOffsetMm(value);
+      } catch (error) {
+        // ignore
+      }
+    };
+    loadOffset();
+    return () => { mounted = false; };
+  }, [configDb]);
+
   const generateHTML = (data = props) =>
-    buildIngresoHtml(data, { estacionamientoPrecio: data?.precio_estacionamiento });
+    buildIngresoHtml(data, {
+      estacionamientoPrecio: data?.precio_estacionamiento,
+      printOffsetMm,
+    });
 
   const getPrintableData = async () => {
     try {

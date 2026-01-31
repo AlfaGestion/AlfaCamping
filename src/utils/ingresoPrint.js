@@ -1,4 +1,5 @@
 const DEFAULT_LOGO_URL = "https://alfagestion.com.ar/alfagestion/logo_desemboque.png";
+const ENV_PRINT_OFFSET_MM = Number(process.env.EXPO_PUBLIC_PRINT_OFFSET_MM || 0);
 
 const normalizeText = (value) => {
   const text = typeof value === "string" ? value.trim() : "";
@@ -48,6 +49,9 @@ const calcIngresoTotals = (ingreso, options = {}) => {
 
 export const buildIngresoHtml = (ingreso, options = {}) => {
   const logoUrl = options.logoUrl || DEFAULT_LOGO_URL;
+  const printOffsetMm = Number(
+    options.printOffsetMm ?? ENV_PRINT_OFFSET_MM ?? 0
+  );
   const idLabel = ingreso?.id ?? "S/N";
   const visitante = getIngresoNombre(ingreso);
   const isSameDay = ingreso?.ingreso && ingreso?.egreso && ingreso.ingreso === ingreso.egreso;
@@ -69,14 +73,17 @@ export const buildIngresoHtml = (ingreso, options = {}) => {
       <head>
         <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
         <style>
-          @page { size: 80mm auto; margin: 4mm; }
+          @page { size: 80mm auto; margin: 0; }
           body { 
             font-family: 'Courier New', Courier, monospace; 
-            padding: 0; 
+            padding: 0 4mm; 
             color: #000; 
-            width: 72mm;
-            margin: 0 auto;
+            width: 80mm;
+            margin: 0;
             font-size: 14px;
+            box-sizing: border-box;
+            position: relative;
+            left: ${printOffsetMm}mm;
           }
           .header { text-align: center; margin-bottom: 5px; }
           .logo { 

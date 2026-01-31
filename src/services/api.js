@@ -3,11 +3,19 @@ import Toast from "react-native-toast-message";
 export async function getApiConfig(configDb) {  
   const response = await configDb.fetchConfig();
   
-  const API_URI = response.find(item => item.clave === "api_uri")?.valor
+  let API_URI = response.find(item => item.clave === "api_uri")?.valor
   const ALFA_ACCOUNT = response.find(item => item.clave === "customer_id")?.valor
   const PASSWORD_SYNC = response.find(item => item.clave === "password")?.valor
   const USERNAME_SYNC = response.find(item => item.clave === "username")?.valor
   const ALFA_DATABASE_ID = response.find(item => item.clave === "database_id")?.valor
+
+  if (!API_URI) {
+    const envApi = process.env.EXPO_PUBLIC_API_URI;
+    if (envApi) {
+      API_URI = envApi;
+      await configDb.setConfigValue("api_uri", envApi);
+    }
+  }
 
   return [API_URI, ALFA_ACCOUNT, PASSWORD_SYNC, USERNAME_SYNC, ALFA_DATABASE_ID];
 }

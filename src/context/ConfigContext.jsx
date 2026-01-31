@@ -15,6 +15,7 @@ const ConfigContextProvider = ({ children }) => {
   const [databaseId, setDatabaseId] = useState('')
   const [allowsDuplicated, setAllowsDuplicated] = useState(false)
   const [printerIp, setPrinterIp] = useState('')
+  const [printOffsetMm, setPrintOffsetMm] = useState('')
   
   const apiRef = useRef(null)
   const userRef = useRef(null)
@@ -179,6 +180,7 @@ const ConfigContextProvider = ({ children }) => {
         databaseId, setDatabaseId,
         allowsDuplicated, setAllowsDuplicated,
         printerIp, setPrinterIp,
+        printOffsetMm, setPrintOffsetMm,
 
         apiRef, userRef, passRef, customerRef, dbRef, submitRef,
 

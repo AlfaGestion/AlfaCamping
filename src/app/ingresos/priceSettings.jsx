@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useContext } from "react";
 import {
   View, Text, TextInput, ScrollView, TouchableOpacity,
   ActivityIndicator, Alert, KeyboardAvoidingView, Platform, StyleSheet
@@ -7,6 +7,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { usePreciosDb } from "@/db/usePreciosDb";
+import { IngresoContext } from "@/context/IngresoContext";
 import { newOrderStyles } from "@/styles/OrderStyle";
 import Colors from "@/styles/Colors";
 import Toast from "react-native-toast-message";
@@ -30,6 +31,13 @@ export default function PriceSettings() {
   const { getAll, updatePrecioByCodigo } = usePreciosDb();
   const [precios, setPrecios] = useState({});
   const [loading, setLoading] = useState(true);
+  const [hasBackup, setHasBackup] = useState(false);
+  const {
+    restorePreciosFromBackup,
+    restoreMediosDePagoFromBackup,
+    hasPreciosBackup,
+    hasMediosBackup,
+  } = useContext(IngresoContext);
 
   const cargarPrecios = async () => {
     try {
@@ -54,6 +62,16 @@ export default function PriceSettings() {
   useEffect(() => {
     cargarPrecios();
   }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    const checkBackup = async () => {
+      const [hasP, hasM] = await Promise.all([hasPreciosBackup(), hasMediosBackup()]);
+      if (mounted) setHasBackup(Boolean(hasP || hasM));
+    };
+    checkBackup();
+    return () => { mounted = false; };
+  }, [hasPreciosBackup, hasMediosBackup]);
 
   const handleChange = useCallback((id, valor) => {
     const numerico = valor.replace(/[^0-9]/g, '');
@@ -90,6 +108,17 @@ export default function PriceSettings() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleRestoreBackup = async () => {
+    const restoredPrices = await restorePreciosFromBackup();
+    await restoreMediosDePagoFromBackup();
+
+    if (!restoredPrices) {
+      return Alert.alert("Atención", "No hay backup para restaurar.");
+    }
+
+    await cargarPrecios();
   };
 
   if (loading) {
@@ -174,6 +203,13 @@ export default function PriceSettings() {
             <Text style={newOrderStyles.textBtnOptions}>Guardar Cambios</Text>
           </TouchableOpacity> */}
 
+          {hasBackup && (
+            <TouchableOpacity onPress={handleRestoreBackup} style={[newOrderStyles.btnOptions, styles.restoreBottomBtn]}>
+              <Ionicons name="refresh" size={18} color="white" />
+              <Text style={newOrderStyles.textBtnOptions}>Restaurar backup</Text>
+            </TouchableOpacity>
+          )}
+
           <View style={{ height: 100 }} />
         </ScrollView>
       </KeyboardAvoidingView>
@@ -185,6 +221,7 @@ const styles = StyleSheet.create({
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   header: { flexDirection: 'row', alignItems: 'center', padding: 15, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#EEE' },
   headerTitle: { fontSize: 18, fontFamily: 'Poppins-Bold', marginLeft: 15 },
+  restoreBottomBtn: { marginTop: 10, marginBottom: 20, backgroundColor: '#4A90E2' },
   card: { backgroundColor: '#fff', borderRadius: 8, padding: 15, marginBottom: 15, borderLeftWidth: 4, elevation: 2 },
   cardVisitantes: { backgroundColor: '#e9f7e5', borderLeftColor: Colors.GREEN },
   cardLocales: { backgroundColor: '#e6eff9', borderLeftColor: Colors.LBLUE },
