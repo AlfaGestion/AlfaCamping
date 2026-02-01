@@ -114,10 +114,14 @@ export default function New() {
 
       const [apiRow] = await configDb.getConfigValue("api_uri");
       const [tokenRow] = await configDb.getConfigValue("TOKEN");
-      const apiUri = apiRow?.valor?.trim();
+      const envApiUri = process.env.EXPO_PUBLIC_API_URI;
+      const apiUri = (apiRow?.valor?.trim() || envApiUri?.trim());
       const token = tokenRow?.valor?.trim();
 
       if (!apiUri || !token) return;
+      if (!apiRow?.valor && envApiUri) {
+        await configDb.setConfigValue("api_uri", envApiUri);
+      }
 
       const baseUrl = apiUri.endsWith("/") ? apiUri : `${apiUri}/`;
       const endpoint = `${CLIENTE_LOOKUP_ENDPOINT}?dni=${encodeURIComponent(dniSeleccionado)}`;

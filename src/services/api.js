@@ -4,16 +4,42 @@ export async function getApiConfig(configDb) {
   const response = await configDb.fetchConfig();
   
   let API_URI = response.find(item => item.clave === "api_uri")?.valor
-  const ALFA_ACCOUNT = response.find(item => item.clave === "customer_id")?.valor
-  const PASSWORD_SYNC = response.find(item => item.clave === "password")?.valor
-  const USERNAME_SYNC = response.find(item => item.clave === "username")?.valor
-  const ALFA_DATABASE_ID = response.find(item => item.clave === "database_id")?.valor
+  let ALFA_ACCOUNT = response.find(item => item.clave === "customer_id")?.valor
+  let PASSWORD_SYNC = response.find(item => item.clave === "password")?.valor
+  let USERNAME_SYNC = response.find(item => item.clave === "username")?.valor
+  let ALFA_DATABASE_ID = response.find(item => item.clave === "database_id")?.valor
 
-  if (!API_URI) {
-    const envApi = process.env.EXPO_PUBLIC_API_URI;
-    if (envApi) {
-      API_URI = envApi;
-      await configDb.setConfigValue("api_uri", envApi);
+  const envFallbacks = [
+    ["api_uri", "EXPO_PUBLIC_API_URI"],
+    ["customer_id", "EXPO_PUBLIC_CUSTOMER_ID"],
+    ["password", "EXPO_PUBLIC_PASSWORD"],
+    ["username", "EXPO_PUBLIC_USERNAME"],
+    ["database_id", "EXPO_PUBLIC_DATABASE_ID"],
+  ];
+
+  const getEnv = (key) => {
+    const value = process.env?.[key];
+    return value !== undefined && value !== null && value !== "" ? value : undefined;
+  };
+
+  for (const [configKey, envKey] of envFallbacks) {
+    const envValue = getEnv(envKey);
+    if (!envValue) continue;
+    if (configKey === "api_uri" && !API_URI) {
+      API_URI = envValue;
+      await configDb.setConfigValue("api_uri", envValue);
+    } else if (configKey === "customer_id" && !ALFA_ACCOUNT) {
+      ALFA_ACCOUNT = envValue;
+      await configDb.setConfigValue("customer_id", envValue);
+    } else if (configKey === "password" && !PASSWORD_SYNC) {
+      PASSWORD_SYNC = envValue;
+      await configDb.setConfigValue("password", envValue);
+    } else if (configKey === "username" && !USERNAME_SYNC) {
+      USERNAME_SYNC = envValue;
+      await configDb.setConfigValue("username", envValue);
+    } else if (configKey === "database_id" && !ALFA_DATABASE_ID) {
+      ALFA_DATABASE_ID = envValue;
+      await configDb.setConfigValue("database_id", envValue);
     }
   }
 

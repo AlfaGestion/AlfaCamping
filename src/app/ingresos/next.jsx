@@ -201,7 +201,11 @@ export default function NewTaskScreen() {
     const loadOffset = async () => {
       try {
         const [row] = await configDb.getConfigValue("print_offset_mm");
-        const value = row?.valor ?? "";
+        const envValue = process.env.EXPO_PUBLIC_PRINT_OFFSET_MM;
+        const value = row?.valor ?? envValue ?? "";
+        if (!row?.valor && envValue) {
+          await configDb.setConfigValue("print_offset_mm", String(envValue));
+        }
         if (mounted) setPrintOffsetMm(value);
       } catch (error) {
         // ignore
@@ -286,8 +290,29 @@ export default function NewTaskScreen() {
     }
   };
 
+  const hydratePrecio = (value, fallback) => {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric) && numeric > 0) return numeric;
+    const next = Number(fallback);
+    return Number.isFinite(next) ? next : 0;
+  };
+
   const generateHTML = (overrides = {}) => {
-    const ingresoPrint = { ...ingreso, ...overrides };
+    const ingresoBase = { ...ingreso, ...overrides };
+    const ingresoPrint = {
+      ...ingresoBase,
+      precio_adultos: hydratePrecio(ingresoBase?.precio_adultos, allPrecios.adultos),
+      precio_menores: hydratePrecio(ingresoBase?.precio_menores, allPrecios.menores),
+      precio_jubilados: hydratePrecio(ingresoBase?.precio_jubilados, allPrecios.jubilados),
+      precio_bajada_lancha: hydratePrecio(ingresoBase?.precio_bajada_lancha, allPrecios.bajada_lancha),
+      precio_adultosL: hydratePrecio(ingresoBase?.precio_adultosL, allPrecios.adultosL),
+      precio_menoresL: hydratePrecio(ingresoBase?.precio_menoresL, allPrecios.menoresL),
+      precio_jubiladosL: hydratePrecio(ingresoBase?.precio_jubiladosL, allPrecios.jubiladosL),
+      precio_bajada_lanchaL: hydratePrecio(ingresoBase?.precio_bajada_lanchaL, allPrecios.bajada_lanchaL),
+      precio_adicional: hydratePrecio(ingresoBase?.precio_adicional, allPrecios.adicional),
+      precio_adicionalL: hydratePrecio(ingresoBase?.precio_adicionalL, allPrecios.adicionalL),
+      precio_estacionamiento: hydratePrecio(ingresoBase?.precio_estacionamiento, allPrecios.estacionamiento),
+    };
     const estacionamientoPrecio = Number(ingresoPrint?.precio_estacionamiento ?? allPrecios.estacionamiento ?? 0);
     return buildIngresoHtml(ingresoPrint, {
       totalOverride: totalFinal,

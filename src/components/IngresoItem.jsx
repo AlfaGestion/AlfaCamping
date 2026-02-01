@@ -36,7 +36,11 @@ export default function IngresoItem(props) {
     const loadOffset = async () => {
       try {
         const [row] = await configDb.getConfigValue("print_offset_mm");
-        const value = row?.valor ?? "";
+        const envValue = process.env.EXPO_PUBLIC_PRINT_OFFSET_MM;
+        const value = row?.valor ?? envValue ?? "";
+        if (!row?.valor && envValue) {
+          await configDb.setConfigValue("print_offset_mm", String(envValue));
+        }
         if (mounted) setPrintOffsetMm(value);
       } catch (error) {
         // ignore
