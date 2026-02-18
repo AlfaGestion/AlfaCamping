@@ -30,25 +30,52 @@ export default function IngresoItem(props) {
   const nombreVisitante = getIngresoNombre(props);
 
   const [printOffsetMm, setPrintOffsetMm] = useState("");
+  const [printQueueDelayMs, setPrintQueueDelayMs] = useState("");
+  const [printRetries, setPrintRetries] = useState("");
+  const [printRetryDelayMs, setPrintRetryDelayMs] = useState("");
 
   useEffect(() => {
     let mounted = true;
-    const loadOffset = async () => {
+    const readConfigOrEnv = async (key, envValue, fallback) => {
+      const [row] = await configDb.getConfigValue(key);
+      const value = row?.valor ?? envValue ?? fallback;
+      if (!row?.valor) {
+        await configDb.setConfigValue(key, String(value));
+      }
+      return String(value);
+    };
+
+    const loadPrintConfig = async () => {
       try {
-        const [row] = await configDb.getConfigValue("print_offset_mm");
-        const envValue = process.env.EXPO_PUBLIC_PRINT_OFFSET_MM;
-        const value = row?.valor ?? envValue ?? "";
-        if (!row?.valor && envValue) {
-          await configDb.setConfigValue("print_offset_mm", String(envValue));
+        const [offset, queueDelay, retries, retryDelay] = await Promise.all([
+          readConfigOrEnv("print_offset_mm", process.env.EXPO_PUBLIC_PRINT_OFFSET_MM, 0),
+          readConfigOrEnv("print_queue_delay_ms", process.env.EXPO_PUBLIC_PRINT_QUEUE_DELAY_MS, 1200),
+          readConfigOrEnv("print_retries", process.env.EXPO_PUBLIC_PRINT_RETRIES, 1),
+          readConfigOrEnv("print_retry_delay_ms", process.env.EXPO_PUBLIC_PRINT_RETRY_DELAY_MS, 1500),
+        ]);
+
+        if (mounted) {
+          setPrintOffsetMm(offset);
+          setPrintQueueDelayMs(queueDelay);
+          setPrintRetries(retries);
+          setPrintRetryDelayMs(retryDelay);
         }
-        if (mounted) setPrintOffsetMm(value);
       } catch (error) {
         // ignore
       }
     };
-    loadOffset();
+    loadPrintConfig();
     return () => { mounted = false; };
   }, [configDb]);
+
+  const queueDelay = Number(printQueueDelayMs);
+  const retries = Number(printRetries);
+  const retryDelay = Number(printRetryDelayMs);
+  const printQueueOptions = {
+    queueDelayMs: Number.isFinite(queueDelay) ? queueDelay : 1200,
+    retries: Number.isFinite(retries) ? retries : 1,
+    retryDelayMs: Number.isFinite(retryDelay) ? retryDelay : 1500,
+  };
 
   const generateHTML = (data = props) =>
     buildIngresoHtml(data, {
@@ -77,7 +104,7 @@ export default function IngresoItem(props) {
     try {
       // 1. Generamos el PDF en una ubicación temporal
       const printable = await getPrintableData();
-      const { uri } = await printToFileQueued(generateHTML(printable));
+      const { uri } = await printToFileQueued(generateHTML(printable), printQueueOptions);
 
       const ingresoFmt = props.ingreso ? props.ingreso.replace(/\//g, '-') : 'sin-fecha';
       const egresoFmt = props.egreso ? props.egreso.replace(/\//g, '-') : 'sin-fecha';
@@ -111,7 +138,7 @@ export default function IngresoItem(props) {
     if (isRemote) return;
     try {
       const printable = await getPrintableData();
-      await printHtmlQueued(generateHTML(printable));
+      await printHtmlQueued(generateHTML(printable), printQueueOptions);
     } catch (error) {
       Alert.alert("Error", "Hubo un problema al intentar imprimir.");
     }

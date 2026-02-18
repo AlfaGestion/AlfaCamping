@@ -1,6 +1,19 @@
 import { type SQLiteDatabase } from "expo-sqlite";
 
 export async function initDb(db: SQLiteDatabase) {
+  const ensureConfigKey = async (clave: string, valor = "") => {
+    const rows: any = await db.getAllAsync(
+      "SELECT COUNT(*) as count FROM configuracion WHERE clave = ?;",
+      [clave]
+    );
+    if (!rows?.[0]?.count) {
+      await db.runAsync(
+        "INSERT INTO configuracion (clave, valor) VALUES (?, ?);",
+        [clave, valor]
+      );
+    }
+  };
+
   // 1. Tabla de Configuración
   await db.execAsync(`
     CREATE TABLE IF NOT EXISTS configuracion (id INTEGER PRIMARY KEY AUTOINCREMENT, clave TEXT, valor TEXT);
@@ -16,8 +29,22 @@ export async function initDb(db: SQLiteDatabase) {
       INSERT INTO configuracion (clave, valor) VALUES ('database_id', '');
       INSERT INTO configuracion (clave, valor) VALUES ('cfg_impresora_barrera_1', '');
       INSERT INTO configuracion (clave, valor) VALUES ('print_offset_mm', '');
+      INSERT INTO configuracion (clave, valor) VALUES ('print_queue_delay_ms', '');
+      INSERT INTO configuracion (clave, valor) VALUES ('print_retries', '');
+      INSERT INTO configuracion (clave, valor) VALUES ('print_retry_delay_ms', '');
     `);
   }
+
+  await ensureConfigKey("api_uri", "");
+  await ensureConfigKey("username", "");
+  await ensureConfigKey("password", "");
+  await ensureConfigKey("customer_id", "");
+  await ensureConfigKey("database_id", "");
+  await ensureConfigKey("cfg_impresora_barrera_1", "");
+  await ensureConfigKey("print_offset_mm", "");
+  await ensureConfigKey("print_queue_delay_ms", "");
+  await ensureConfigKey("print_retries", "");
+  await ensureConfigKey("print_retry_delay_ms", "");
 
   // 2. Tabla de Ingresos
   await db.execAsync(`

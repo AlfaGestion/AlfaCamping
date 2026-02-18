@@ -57,6 +57,9 @@ export default function NewTaskScreen() {
   } = useContext(IngresoContext);
   const configDb = useConfigDb();
   const [printOffsetMm, setPrintOffsetMm] = useState("");
+  const [printQueueDelayMs, setPrintQueueDelayMs] = useState("");
+  const [printRetries, setPrintRetries] = useState("");
+  const [printRetryDelayMs, setPrintRetryDelayMs] = useState("");
 
   useFocusEffect(useCallback(() => {
     const onBackPress = () => {
@@ -198,22 +201,49 @@ export default function NewTaskScreen() {
 
   useEffect(() => {
     let mounted = true;
-    const loadOffset = async () => {
+    const readConfigOrEnv = async (key, envValue, fallback) => {
+      const [row] = await configDb.getConfigValue(key);
+      const value = row?.valor ?? envValue ?? fallback;
+      if (!row?.valor) {
+        await configDb.setConfigValue(key, String(value));
+      }
+      return String(value);
+    };
+
+    const loadPrintConfig = async () => {
       try {
-        const [row] = await configDb.getConfigValue("print_offset_mm");
-        const envValue = process.env.EXPO_PUBLIC_PRINT_OFFSET_MM;
-        const value = row?.valor ?? envValue ?? "";
-        if (!row?.valor && envValue) {
-          await configDb.setConfigValue("print_offset_mm", String(envValue));
+        const [offset, queueDelay, retries, retryDelay] = await Promise.all([
+          readConfigOrEnv("print_offset_mm", process.env.EXPO_PUBLIC_PRINT_OFFSET_MM, 0),
+          readConfigOrEnv("print_queue_delay_ms", process.env.EXPO_PUBLIC_PRINT_QUEUE_DELAY_MS, 1200),
+          readConfigOrEnv("print_retries", process.env.EXPO_PUBLIC_PRINT_RETRIES, 1),
+          readConfigOrEnv("print_retry_delay_ms", process.env.EXPO_PUBLIC_PRINT_RETRY_DELAY_MS, 1500),
+        ]);
+
+        if (mounted) {
+          setPrintOffsetMm(offset);
+          setPrintQueueDelayMs(queueDelay);
+          setPrintRetries(retries);
+          setPrintRetryDelayMs(retryDelay);
         }
-        if (mounted) setPrintOffsetMm(value);
       } catch (error) {
         // ignore
       }
     };
-    loadOffset();
+    loadPrintConfig();
     return () => { mounted = false; };
   }, [configDb]);
+
+  const printQueueOptions = useMemo(() => {
+    const queueDelay = Number(printQueueDelayMs);
+    const retries = Number(printRetries);
+    const retryDelay = Number(printRetryDelayMs);
+
+    return {
+      queueDelayMs: Number.isFinite(queueDelay) ? queueDelay : 1200,
+      retries: Number.isFinite(retries) ? retries : 1,
+      retryDelayMs: Number.isFinite(retryDelay) ? retryDelay : 1500,
+    };
+  }, [printQueueDelayMs, printRetries, printRetryDelayMs]);
 
   const handleRestoreBackup = async () => {
     const restoredPrices = await restorePreciosFromBackup();
@@ -286,7 +316,7 @@ export default function NewTaskScreen() {
         {
           text: "Imprimir", onPress: async () => {
             try {
-              await printHtmlQueued(html);
+              await printHtmlQueued(html, printQueueOptions);
             } catch (error) {
               Alert.alert("Error", "No se pudo enviar el ticket a imprimir.");
             }
@@ -295,7 +325,7 @@ export default function NewTaskScreen() {
         {
           text: "Compartir", onPress: async () => {
             try {
-              const { uri } = await printToFileQueued(html);
+              const { uri } = await printToFileQueued(html, printQueueOptions);
               await Sharing.shareAsync(uri);
             } catch (error) {
               Alert.alert("Error", "No se pudo generar el comprobante.");

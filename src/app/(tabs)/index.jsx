@@ -19,6 +19,7 @@ import InputDate from "@/components/InputDate";
 import { useApi } from "@/hooks/useApi";
 import * as Sharing from "expo-sharing";
 import { printToFileQueued } from "@/utils/printQueue";
+import { useConfigDb } from "@/db/useConfigDb";
 
 
 // --- 1. DEFINICIÓN DE FILTROS ---
@@ -32,6 +33,7 @@ const FILTERS = {
 
 export default function Index() {
     const router = useRouter();
+    const configDb = useConfigDb();
     const appVersion =
         process.env.EXPO_PUBLIC_APP_LABEL_VERSION
         ?? Constants.expoConfig?.version
@@ -58,6 +60,9 @@ export default function Index() {
     const [remoteIngresos, setRemoteIngresos] = useState([]);
     const [remoteLoading, setRemoteLoading] = useState(false);
     const [statsWebHeight, setStatsWebHeight] = useState(700);
+    const [printQueueDelayMs, setPrintQueueDelayMs] = useState("");
+    const [printRetries, setPrintRetries] = useState("");
+    const [printRetryDelayMs, setPrintRetryDelayMs] = useState("");
 
     const {
         ingresos, isLoading,
@@ -166,6 +171,41 @@ export default function Index() {
             (item.parcela !== undefined && item.parcela !== null && item.parcela.toString().includes(lowerSearchText))
         );
     }, [remoteIngresos, searchText]);
+
+    useEffect(() => {
+        let mounted = true;
+        const readConfigOrEnv = async (key, envValue, fallback) => {
+            const [row] = await configDb.getConfigValue(key);
+            const value = row?.valor ?? envValue ?? fallback;
+            if (!row?.valor) {
+                await configDb.setConfigValue(key, String(value));
+            }
+            return String(value);
+        };
+
+        const loadPrintConfig = async () => {
+            try {
+                const [queueDelay, retries, retryDelay] = await Promise.all([
+                    readConfigOrEnv("print_queue_delay_ms", process.env.EXPO_PUBLIC_PRINT_QUEUE_DELAY_MS, 1200),
+                    readConfigOrEnv("print_retries", process.env.EXPO_PUBLIC_PRINT_RETRIES, 1),
+                    readConfigOrEnv("print_retry_delay_ms", process.env.EXPO_PUBLIC_PRINT_RETRY_DELAY_MS, 1500),
+                ]);
+
+                if (mounted) {
+                    setPrintQueueDelayMs(queueDelay);
+                    setPrintRetries(retries);
+                    setPrintRetryDelayMs(retryDelay);
+                }
+            } catch (error) {
+                // ignore
+            }
+        };
+
+        loadPrintConfig();
+        return () => {
+            mounted = false;
+        };
+    }, [configDb]);
 
     const DEFAULT_LOGO_URL = "https://alfagestion.com.ar/alfagestion/logo_desemboque.png";
     const COMPANY_NAME = "CAMPING EL DESEMBOQUE";
@@ -403,7 +443,14 @@ export default function Index() {
         const hasta = formatDate(statsToDate, true);
         const html = buildStatsHtml(stats, desde, hasta, paymentStats);
         try {
-            const { uri } = await printToFileQueued(html);
+            const queueDelay = Number(printQueueDelayMs);
+            const retries = Number(printRetries);
+            const retryDelay = Number(printRetryDelayMs);
+            const { uri } = await printToFileQueued(html, {
+                queueDelayMs: Number.isFinite(queueDelay) ? queueDelay : 1200,
+                retries: Number.isFinite(retries) ? retries : 1,
+                retryDelayMs: Number.isFinite(retryDelay) ? retryDelay : 1500,
+            });
             const canShare = await Sharing.isAvailableAsync();
             if (!canShare) return;
             await Sharing.shareAsync(uri, {

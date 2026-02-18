@@ -358,7 +358,7 @@ export default function Settings() {
     setCustomerId(customerId)
     setDatabaseId(databaseId)
     setPrinterIp(printerIp)
-    setPrintOffsetMm(printOffsetMm)
+    setPrintOffsetMm(printOffsetMm ?? String(process.env.EXPO_PUBLIC_PRINT_OFFSET_MM ?? 0))
   }
 
   useEffect(() => {
@@ -516,18 +516,6 @@ export default function Settings() {
                 />
               </View> */}
 
-              <View style={[newTaskStyles.element]}>
-                <Text style={[newTaskStyles.label]}>Configurar alineamiento de impresion</Text>
-                <TextInput
-                  style={[newTaskStyles.textInput]}
-                  placeholder="0"
-                  value={printOffsetMm}
-                  onChangeText={setPrintOffsetMm}
-                  keyboardType='numeric'
-                  cursorColor="#C0C0C0"
-                />
-              </View>
-
               <TouchableOpacity
                 onPress={() => { createOrUpdate() }}
                 style={[
@@ -569,6 +557,17 @@ export default function Settings() {
                   <Text style={[newOrderStyles.textBtnOptions]}>Restaurar backup</Text>
                 </TouchableOpacity>
               )}
+
+              <TouchableOpacity
+                onPress={() => router.push("/printConfig")}
+                style={[
+                  { ...newOrderStyles.btnOptions, backgroundColor: '#6B7280' },
+                  { width: "100%", marginBottom: 10 }
+                ]}
+              >
+                <Ionicons name="print-outline" color="white" size={18} />
+                <Text style={[newOrderStyles.textBtnOptions]}>Configuracion de impresion</Text>
+              </TouchableOpacity>
 
               <TouchableOpacity
                 onPress={() => router.push("ingresos/priceSettings")} // O la ruta que definas en expo-router

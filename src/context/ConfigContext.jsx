@@ -16,6 +16,9 @@ const ConfigContextProvider = ({ children }) => {
   const [allowsDuplicated, setAllowsDuplicated] = useState(false)
   const [printerIp, setPrinterIp] = useState('')
   const [printOffsetMm, setPrintOffsetMm] = useState('')
+  const [printQueueDelayMs, setPrintQueueDelayMs] = useState('')
+  const [printRetries, setPrintRetries] = useState('')
+  const [printRetryDelayMs, setPrintRetryDelayMs] = useState('')
   
   const apiRef = useRef(null)
   const userRef = useRef(null)
@@ -181,6 +184,9 @@ const ConfigContextProvider = ({ children }) => {
         allowsDuplicated, setAllowsDuplicated,
         printerIp, setPrinterIp,
         printOffsetMm, setPrintOffsetMm,
+        printQueueDelayMs, setPrintQueueDelayMs,
+        printRetries, setPrintRetries,
+        printRetryDelayMs, setPrintRetryDelayMs,
 
         apiRef, userRef, passRef, customerRef, dbRef, submitRef,
 
