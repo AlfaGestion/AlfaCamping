@@ -25,19 +25,20 @@ const calcIngresoTotals = (ingreso, options = {}) => {
     (Number(ingreso?.jubilados) || 0) * (Number(ingreso?.precio_jubilados) || 0) +
     (Number(ingreso?.adultosL) || 0) * (Number(ingreso?.precio_adultosL) || 0) +
     (Number(ingreso?.menoresL) || 0) * (Number(ingreso?.precio_menoresL) || 0) +
-    (Number(ingreso?.jubiladosL) || 0) * (Number(ingreso?.precio_jubiladosL) || 0) +
+    (Number(ingreso?.jubiladosL) || 0) * (Number(ingreso?.precio_jubiladosL) || 0);
+
+  const bajadaSubtotal =
     (Number(ingreso?.bajada_lancha) || 0) * (Number(ingreso?.precio_bajada_lancha) || 0) +
     (Number(ingreso?.bajada_lanchaL) || 0) * (Number(ingreso?.precio_bajada_lanchaL) || 0);
 
   const motorhomeSubtotal =
-    ((Number(ingreso?.adicional) || 0) * (Number(ingreso?.precio_adicional) || 0) +
-      (Number(ingreso?.adicionalL) || 0) * (Number(ingreso?.precio_adicionalL) || 0)) *
-    estadiaNumber;
+    (Number(ingreso?.adicional) || 0) * (Number(ingreso?.precio_adicional) || 0) +
+    (Number(ingreso?.adicionalL) || 0) * (Number(ingreso?.precio_adicionalL) || 0);
 
-  const estacionamientoSubtotal = ingreso?.estacionamiento ? estacionamientoPrecio : 0;
-  const subtotalImpresion = baseEstadia * estadiaNumber + motorhomeSubtotal + estacionamientoSubtotal;
+  const estacionamientoSubtotal = ingreso?.estacionamiento ? estacionamientoPrecio * estadiaNumber : 0;
+  const subtotalImpresion = baseEstadia * estadiaNumber + bajadaSubtotal + motorhomeSubtotal + estacionamientoSubtotal;
   const totalCalculado = subtotalImpresion - (subtotalImpresion * descuento) / 100;
-  const detalleTotal = baseEstadia + motorhomeSubtotal + estacionamientoSubtotal;
+  const detalleTotal = baseEstadia + bajadaSubtotal + motorhomeSubtotal + estacionamientoSubtotal;
 
   return {
     estacionamientoPrecio,

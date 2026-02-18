@@ -871,22 +871,25 @@ const IngresoContextProvider = ({ children }) => {
 
   const calcularSubTotal = () => {
     const estadiaNumber = Number(ingreso?.estadia) || 1;
-    const baseEstadia = ["adultos", "menores", "jubilados", "bajada_lancha"].reduce((acc, key) => {
+    const baseEstadia = ["adultos", "menores", "jubilados"].reduce((acc, key) => {
       const v = (Number(ingreso?.[key]) || 0) * getUnitPrice(key, false);
       const l = (Number(ingreso?.[`${key}L`]) || 0) * getUnitPrice(key, true);
       return acc + v + l;
     }, 0) * estadiaNumber;
 
+    const bajadaSubtotal =
+      (Number(ingreso?.bajada_lancha) || 0) * getUnitPrice("bajada_lancha", false) +
+      (Number(ingreso?.bajada_lanchaL) || 0) * getUnitPrice("bajada_lancha", true);
+
     const motorhomeSubtotal =
-      ((Number(ingreso?.adicional) || 0) * getPrecioFromList("ING_MOTORHOME") +
-        (Number(ingreso?.adicionalL) || 0) * getPrecioFromList("INGL_MOTORHOME")) *
-      estadiaNumber;
+      (Number(ingreso?.adicional) || 0) * getPrecioFromList("ING_MOTORHOME") +
+      (Number(ingreso?.adicionalL) || 0) * getPrecioFromList("INGL_MOTORHOME");
 
     const estacionamientoSubtotal = ingreso?.estacionamiento
-      ? getPrecioFromList("ING_ESTACIONAMIENTO")
+      ? getPrecioFromList("ING_ESTACIONAMIENTO") * estadiaNumber
       : 0;
 
-    return baseEstadia + motorhomeSubtotal + estacionamientoSubtotal;
+    return baseEstadia + bajadaSubtotal + motorhomeSubtotal + estacionamientoSubtotal;
   };
 
   const calcularTotal = () => {

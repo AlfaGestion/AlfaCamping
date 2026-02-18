@@ -234,20 +234,28 @@ export default function NewTaskScreen() {
   }, [ingreso]);
 
   const subtotalGeneral = useMemo(() => {
-    // 1. Base (Personas + Lancha) multiplicado por estadía
-    const baseEstadia = CATEGORIES.reduce((acc, cat) => {
-      const v = (Number(ingreso[cat.key]) || 0) * (Number(allPrecios[cat.key]) || 0);
-      const l = (Number(ingreso[`${cat.key}L`]) || 0) * (Number(allPrecios[`${cat.key}L`]) || 0);
+    // 1. Personas por estadía
+    const baseEstadia = ["adultos", "menores", "jubilados"].reduce((acc, key) => {
+      const v = (Number(ingreso[key]) || 0) * (Number(allPrecios[key]) || 0);
+      const l = (Number(ingreso[`${key}L`]) || 0) * (Number(allPrecios[`${key}L`]) || 0);
       return acc + v + l;
     }, 0) * (Number(ingreso.estadia) || 1);
 
-    // 2. Motorhome por cantidad (visitantes + locales), multiplicado por estadía
+    // 2. Bajada de lancha se cobra una sola vez
+    const bajadaSubtotal =
+      (Number(ingreso.bajada_lancha) || 0) * (Number(allPrecios.bajada_lancha) || 0) +
+      (Number(ingreso.bajada_lanchaL) || 0) * (Number(allPrecios.bajada_lanchaL) || 0);
+
+    // 3. Motorhome se cobra una sola vez
     const motorhomeSubtotal =
-      ((Number(ingreso.adicional) || 0) * (Number(allPrecios.adicional) || 0) +
-        (Number(ingreso.adicionalL) || 0) * (Number(allPrecios.adicionalL) || 0)) *
-      (Number(ingreso.estadia) || 1);
-    const estacionamientoSubtotal = ingreso.estacionamiento ? Number(allPrecios.estacionamiento) || 0 : 0;
-    return baseEstadia + motorhomeSubtotal + estacionamientoSubtotal;
+      (Number(ingreso.adicional) || 0) * (Number(allPrecios.adicional) || 0) +
+      (Number(ingreso.adicionalL) || 0) * (Number(allPrecios.adicionalL) || 0);
+
+    // 4. Estacionamiento por estadía
+    const estacionamientoSubtotal = ingreso.estacionamiento
+      ? (Number(allPrecios.estacionamiento) || 0) * (Number(ingreso.estadia) || 1)
+      : 0;
+    return baseEstadia + bajadaSubtotal + motorhomeSubtotal + estacionamientoSubtotal;
   }, [ingreso, allPrecios]);
 
   const montoDescuento = (subtotalGeneral * (Number(ingreso.descuento) || 0)) / 100;
