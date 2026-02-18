@@ -2,7 +2,7 @@
   "expo": {
     "name": "AlfaIngresos",
     "slug": "alfacamping",
-    "owner": "alfaapp",
+    "owner": "marcoslromero23",
     "version": "1.0.0",
     "orientation": "default",
     "icon": "./assets/images/icon.png",
@@ -49,7 +49,7 @@
         "origin": false
       },
       "eas": {
-        "projectId": "746364ad-47da-4d66-b02f-c8e6f7074e8f"
+        "projectId": "b95fcc8e-8b0e-49db-8099-2a5ca24e543e"
       }
     }
   }
