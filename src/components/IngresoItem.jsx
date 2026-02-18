@@ -1,7 +1,6 @@
 import { useContext, useEffect, useState } from "react";
 import { Alert, Image, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useRouter } from "expo-router";
-import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system';
 
@@ -11,6 +10,7 @@ import { useIngresoDb } from "@/db/useIngresoDb";
 import { useClienteDb } from "@/db/useClienteDb";
 import { useConfigDb } from "@/db/useConfigDb";
 import { buildIngresoHtml, getIngresoNombre } from "@/utils/ingresoPrint";
+import { printHtmlQueued, printToFileQueued } from "@/utils/printQueue";
 
 export default function IngresoItem(props) {
   const { setIngreso, setIsEditIngreso, setIngresoString, setEgresoString, list } = useContext(IngresoContext);
@@ -77,10 +77,7 @@ export default function IngresoItem(props) {
     try {
       // 1. Generamos el PDF en una ubicación temporal
       const printable = await getPrintableData();
-      const { uri } = await Print.printToFileAsync({
-        html: generateHTML(printable),
-        base64: false
-      });
+      const { uri } = await printToFileQueued(generateHTML(printable));
 
       const ingresoFmt = props.ingreso ? props.ingreso.replace(/\//g, '-') : 'sin-fecha';
       const egresoFmt = props.egreso ? props.egreso.replace(/\//g, '-') : 'sin-fecha';
@@ -114,9 +111,7 @@ export default function IngresoItem(props) {
     if (isRemote) return;
     try {
       const printable = await getPrintableData();
-      await Print.printAsync({
-        html: generateHTML(printable),
-      });
+      await printHtmlQueued(generateHTML(printable));
     } catch (error) {
       Alert.alert("Error", "Hubo un problema al intentar imprimir.");
     }

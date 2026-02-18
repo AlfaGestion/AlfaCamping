@@ -17,8 +17,8 @@ import { formatDate } from "@/utils/Utils";
 import IngresoItem from "@/components/IngresoItem";
 import InputDate from "@/components/InputDate";
 import { useApi } from "@/hooks/useApi";
-import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
+import { printToFileQueued } from "@/utils/printQueue";
 
 
 // --- 1. DEFINICIÓN DE FILTROS ---
@@ -403,7 +403,7 @@ export default function Index() {
         const hasta = formatDate(statsToDate, true);
         const html = buildStatsHtml(stats, desde, hasta, paymentStats);
         try {
-            const { uri } = await Print.printToFileAsync({ html, base64: false });
+            const { uri } = await printToFileQueued(html);
             const canShare = await Sharing.isAvailableAsync();
             if (!canShare) return;
             await Sharing.shareAsync(uri, {

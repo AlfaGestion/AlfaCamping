@@ -9,13 +9,13 @@ import { useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import Checkbox from "expo-checkbox";
 
-import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 
 import { IngresoContext } from "@/context/IngresoContext";
 import { useConfigDb } from "@/db/useConfigDb";
 import Colors from "@/styles/Colors";
 import { buildIngresoHtml } from "@/utils/ingresoPrint";
+import { printHtmlQueued, printToFileQueued } from "@/utils/printQueue";
 import { parseNumber } from "@/utils/Utils";
 
 const CATEGORIES = [
@@ -275,11 +275,23 @@ export default function NewTaskScreen() {
 
       const html = generateHTML({ id: savedId ?? ingreso?.id });
       Alert.alert("Guardado", "¿Qué desea hacer?", [
-        { text: "Imprimir", onPress: async () => await Print.printAsync({ html }) },
+        {
+          text: "Imprimir", onPress: async () => {
+            try {
+              await printHtmlQueued(html);
+            } catch (error) {
+              Alert.alert("Error", "No se pudo enviar el ticket a imprimir.");
+            }
+          }
+        },
         {
           text: "Compartir", onPress: async () => {
-            const { uri } = await Print.printToFileAsync({ html });
-            await Sharing.shareAsync(uri);
+            try {
+              const { uri } = await printToFileQueued(html);
+              await Sharing.shareAsync(uri);
+            } catch (error) {
+              Alert.alert("Error", "No se pudo generar el comprobante.");
+            }
           }
         },
         { text: "Cerrar", onPress: () => router.replace("/") },
