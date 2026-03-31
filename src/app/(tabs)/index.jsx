@@ -17,9 +17,9 @@ import { formatDate } from "@/utils/Utils";
 import IngresoItem from "@/components/IngresoItem";
 import InputDate from "@/components/InputDate";
 import { useApi } from "@/hooks/useApi";
-import { useIngresoDb } from "@/db/useIngresoDb";
-import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
+import { printToFileQueued } from "@/utils/printQueue";
+import { useConfigDb } from "@/db/useConfigDb";
 
 
 // --- 1. DEFINICIÓN DE FILTROS ---
@@ -33,25 +33,36 @@ const FILTERS = {
 
 export default function Index() {
     const router = useRouter();
-    const appVersion = Constants.expoConfig?.version ?? Constants.manifest?.version ?? "dev";
+    const configDb = useConfigDb();
+    const appVersion =
+        process.env.EXPO_PUBLIC_APP_LABEL_VERSION
+        ?? Constants.expoConfig?.version
+        ?? Constants.manifest?.version
+        ?? "dev";
 
     const [isEmpty, setIsEmpty] = useState(true);
     const [selectedFilter, setSelectedFilter] = useState(FILTERS.PENDIENTES_EGRESO); // <-- Estado para el filtro
     const netInfo = useNetInfo();
 
     const { fetchDataFromApi } = useApi();
-    const ingresoDb = useIngresoDb();
     const [statsLoading, setStatsLoading] = useState(false);
     const [stats, setStats] = useState(null);
-    const [localPendingCount, setLocalPendingCount] = useState(0);
+    const [paymentStats, setPaymentStats] = useState([]);
 
     const [statsFromDate, setStatsFromDate] = useState(new Date());
     const [statsToDate, setStatsToDate] = useState(new Date());
     const [showStatsFrom, setShowStatsFrom] = useState(false);
     const [showStatsTo, setShowStatsTo] = useState(false);
+    const [predioFromDate, setPredioFromDate] = useState(null);
+    const [predioToDate, setPredioToDate] = useState(null);
+    const [showPredioFrom, setShowPredioFrom] = useState(false);
+    const [showPredioTo, setShowPredioTo] = useState(false);
     const [remoteIngresos, setRemoteIngresos] = useState([]);
     const [remoteLoading, setRemoteLoading] = useState(false);
     const [statsWebHeight, setStatsWebHeight] = useState(700);
+    const [printQueueDelayMs, setPrintQueueDelayMs] = useState("");
+    const [printRetries, setPrintRetries] = useState("");
+    const [printRetryDelayMs, setPrintRetryDelayMs] = useState("");
 
     const {
         ingresos, isLoading,
@@ -60,6 +71,15 @@ export default function Index() {
         setIngresoDate, setIngresoString,
         setEgresoDate, setEgresoString,
     } = useContext(IngresoContext);
+
+    const formatYMD = (date) => {
+        if (!date) return "";
+        const d = new Date(date);
+        const dd = String(d.getDate()).padStart(2, "0");
+        const mm = String(d.getMonth() + 1).padStart(2, "0");
+        const yyyy = d.getFullYear();
+        return `${yyyy}-${mm}-${dd}`;
+    };
 
 
 
@@ -76,9 +96,21 @@ export default function Index() {
             setRemoteLoading(true);
             try {
                 const trimmedSearch = searchText?.trim() ?? "";
-                const endpoint = trimmedSearch
+                const fromParam = predioFromDate ? formatYMD(predioFromDate) : "";
+                const toParam = predioToDate ? formatYMD(predioToDate) : "";
+                const hasDateFilter = Boolean(fromParam || toParam);
+                const dateParams = hasDateFilter ? new URLSearchParams({
+                    ...(fromParam ? { desde: fromParam } : {}),
+                    ...(toParam ? { hasta: toParam } : {}),
+                }).toString() : "";
+
+                let endpoint = trimmedSearch
                     ? `ingresos/ingresospendientes/search?search=${encodeURIComponent(trimmedSearch)}`
                     : "ingresos/ingresospendientes";
+
+                if (hasDateFilter) {
+                    endpoint += trimmedSearch ? `&${dateParams}` : `?${dateParams}`;
+                }
                 const response = await fetchDataFromApi(endpoint);
                 const raw = response?.data ?? response;
                 const data = Array.isArray(raw)
@@ -112,7 +144,7 @@ export default function Index() {
         return () => {
             isActive = false;
         };
-    }, [selectedFilter, netInfo.isConnected, searchText]);
+    }, [selectedFilter, netInfo.isConnected, searchText, predioFromDate, predioToDate]);
 
     const formatIsoDate = (value) => {
         if (!value) return "";
@@ -140,25 +172,84 @@ export default function Index() {
         );
     }, [remoteIngresos, searchText]);
 
+    useEffect(() => {
+        let mounted = true;
+        const readConfigOrEnv = async (key, envValue, fallback) => {
+            const [row] = await configDb.getConfigValue(key);
+            const value = row?.valor ?? envValue ?? fallback;
+            if (!row?.valor) {
+                await configDb.setConfigValue(key, String(value));
+            }
+            return String(value);
+        };
+
+        const loadPrintConfig = async () => {
+            try {
+                const [queueDelay, retries, retryDelay] = await Promise.all([
+                    readConfigOrEnv("print_queue_delay_ms", process.env.EXPO_PUBLIC_PRINT_QUEUE_DELAY_MS, 1200),
+                    readConfigOrEnv("print_retries", process.env.EXPO_PUBLIC_PRINT_RETRIES, 1),
+                    readConfigOrEnv("print_retry_delay_ms", process.env.EXPO_PUBLIC_PRINT_RETRY_DELAY_MS, 1500),
+                ]);
+
+                if (mounted) {
+                    setPrintQueueDelayMs(queueDelay);
+                    setPrintRetries(retries);
+                    setPrintRetryDelayMs(retryDelay);
+                }
+            } catch (error) {
+                // ignore
+            }
+        };
+
+        loadPrintConfig();
+        return () => {
+            mounted = false;
+        };
+    }, [configDb]);
+
     const DEFAULT_LOGO_URL = "https://alfagestion.com.ar/alfagestion/logo_desemboque.png";
     const COMPANY_NAME = "CAMPING EL DESEMBOQUE";
-    const buildStatsHtml = (data, desde, hasta, localPending) => {
+    const buildStatsHtml = (data, desde, hasta, mediosPago) => {
         const statsData = data || {};
-        const totalMov = (statsData.ingresaron ?? 0) + (statsData.egresaron ?? 0) + (statsData.en_predio ?? 0);
-        const totalPers = (statsData.adultos ?? 0) + (statsData.menores ?? 0) + (statsData.jubilados ?? 0);
-        const totalServ = (statsData.estacionamientos ?? 0) + (statsData.motorhome ?? 0) + (statsData.bajada_lancha ?? 0);
+        const toNumber = (value) => {
+            const num = Number(value);
+            return Number.isNaN(num) ? 0 : num;
+        };
+        const formatAmount = (value) => {
+            const fixed = toNumber(value).toFixed(2);
+            const [intPart, decPart] = fixed.split(".");
+            const withThousands = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+            return `${withThousands},${decPart}`;
+        };
+        const statsMap = Object.fromEntries(
+            Object.entries(statsData || {}).map(([key, value]) => [String(key).toLowerCase(), value])
+        );
+        const getStat = (primary, fallback) => {
+            const primaryKey = String(primary).toLowerCase();
+            const fallbackKey = String(fallback).toLowerCase();
+            if (statsMap[primaryKey] !== undefined && statsMap[primaryKey] !== null) return toNumber(statsMap[primaryKey]);
+            return toNumber(statsMap[fallbackKey]);
+        };
+        const totalPersVisit = getStat("adultos", "adultos") + getStat("menores", "menores") + getStat("jubilados", "jubilados");
+        const totalPersLocal = getStat("adultos_l", "adultos_l") + getStat("menores_l", "menores_l") + getStat("jubilados_l", "jubilados_l");
+        const totalServVisit = getStat("estacionamientos", "estacionamientos")
+            + getStat("motorhome", "motorhome")
+            + getStat("bajada_lancha", "bajada_lancha");
         const chartItems = [
-            { label: "Ingresaron", value: statsData.ingresaron ?? 0 },
-            { label: "En el predio", value: statsData.en_predio ?? 0 },
-            { label: "Egresaron", value: statsData.egresaron ?? 0 },
-            { label: "Adultos", value: statsData.adultos ?? 0 },
-            { label: "Menores", value: statsData.menores ?? 0 },
-            { label: "Jubilados", value: statsData.jubilados ?? 0 },
+            { label: "Ingresaron", value: getStat("ingresaron", "ingresaron") },
+            { label: "En el predio", value: getStat("en_predio", "en_predio") },
+            { label: "Egresaron", value: getStat("egresaron", "egresaron") },
+            { label: "Adultos", value: getStat("adultos", "adultos") },
+            { label: "Adultos L", value: getStat("adultos_l", "adultos_l") },
+            { label: "Menores", value: getStat("menores", "menores") },
+            { label: "Menores L", value: getStat("menores_l", "menores_l") },
+            { label: "Jubilados", value: getStat("jubilados", "jubilados") },
+            { label: "Jubilados L", value: getStat("jubilados_l", "jubilados_l") },
         ];
-        const maxVal = Math.max(1, ...chartItems.map((i) => Number(i.value) || 0));
+        const maxVal = Math.max(1, ...chartItems.map((i) => toNumber(i.value)));
         const chartRows = chartItems
             .map((i) => {
-                const pct = Math.round((Number(i.value) || 0) * 100 / maxVal);
+                const pct = Math.round(toNumber(i.value) * 100 / maxVal);
                 return `<div class="chart-row">
   <div class="chart-label">${i.label}</div>
   <div class="chart-bar">
@@ -168,6 +259,65 @@ export default function Index() {
 </div>`;
             })
             .join("");
+        const mediosList = Array.isArray(mediosPago) ? mediosPago : [];
+        const getRowValue = (row, key) => {
+            const lowerKey = String(key).toLowerCase();
+            const map = Object.fromEntries(
+                Object.entries(row || {}).map(([k, v]) => [String(k).toLowerCase(), v])
+            );
+            return map[lowerKey];
+        };
+        const normalizeDescripcion = (value) => String(value ?? "").trim().toUpperCase();
+        const mergedMedios = Object.values(
+            mediosList.reduce((acc, row) => {
+                const descripcionRaw = getRowValue(row, "Descripcion") ?? getRowValue(row, "descripcion") ?? "SIN DESCRIPCION";
+                const descripcionNorm = normalizeDescripcion(descripcionRaw);
+                const isCuentaCorriente = descripcionNorm === "CUENTA CORRIENTE";
+                const key = isCuentaCorriente ? "CUENTA CORRIENTE" : descripcionRaw;
+                const cantidad = toNumber(getRowValue(row, "cantidad"));
+                const total = toNumber(getRowValue(row, "total"));
+                if (!acc[key]) {
+                    acc[key] = { descripcion: key, cantidad: 0, total: 0 };
+                }
+                acc[key].cantidad += cantidad;
+                acc[key].total += total;
+                return acc;
+            }, {})
+        );
+        const mediosTotales = mergedMedios.reduce(
+            (acc, row) => {
+                acc.cantidad += row.cantidad;
+                acc.total += row.total;
+                return acc;
+            },
+            { cantidad: 0, total: 0 }
+        );
+        const mediosRows = mergedMedios
+            .map((row) => {
+                const total = formatAmount(row.total);
+                return `<div class="mp-grid">
+  <span class="mp-desc">${row.descripcion}</span>
+  <span class="mp-num">${row.cantidad}</span>
+  <span class="mp-num">${total}</span>
+</div>`;
+            })
+            .join("");
+        const mediosSection = mediosRows
+            ? `<div class="section-title">Medios de pago</div>
+  <div class="card">
+    <div class="mp-grid mp-head">
+      <span class="mp-desc">Descripcion</span>
+      <span class="mp-num">Cant.</span>
+      <span class="mp-num">Total</span>
+    </div>
+    ${mediosRows}
+    <div class="mp-grid mp-total">
+      <span class="mp-desc">Total</span>
+      <span class="mp-num">${mediosTotales.cantidad}</span>
+      <span class="mp-num">${formatAmount(mediosTotales.total)}</span>
+    </div>
+  </div>`
+            : "";
         return `<!doctype html>
 <html>
 <head>
@@ -177,22 +327,40 @@ export default function Index() {
   @page { size: 80mm auto; margin: 4mm; }
   body { font-family: Arial, sans-serif; padding: 0; color: #1f2a44; width: 72mm; margin: 0 auto; font-size: 14px; }
   .header { text-align: center; margin-bottom: 10px; }
-  .logo { width: 120px; height: 120px; object-fit: contain; margin-bottom: 6px; }
-  .title { font-size: 20px; font-weight: 700; margin: 0; text-transform: uppercase; }
-  .subtitle { font-size: 14px; color: #284473; margin: 4px 0 0; }
+  .logo { width: 110px; height: 110px; object-fit: contain; margin-bottom: 6px; }
+  .title { font-size: 19px; font-weight: 700; margin: 0; text-transform: uppercase; }
+  .subtitle { font-size: 13px; color: #284473; margin: 4px 0 0; letter-spacing: 0.5px; }
   .range { font-size: 12px; color: #666; margin: 4px 0 12px; }
-  .card { border: 1px solid #e1e1e1; border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
-  .title { font-size: 14px; font-weight: 700; color: #284473; margin-bottom: 8px; }
-  .row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #f0f0f0; font-size: 13px; }
+
+  .section-title { font-size: 13px; font-weight: 700; color: #284473; margin: 10px 0 6px; text-transform: uppercase; letter-spacing: 0.3px; }
+  .card { border: 1px solid #e1e1e1; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; background: #fff; }
+  .card-title { font-size: 14px; font-weight: 700; color: #284473; margin-bottom: 6px; }
+  .card-hero { border: 1px solid #d7e3f3; border-radius: 10px; padding: 12px; margin-bottom: 10px; background: #f5f9ff; }
+  .section-sep { height: 1px; background: #e6e6e6; margin: 8px 0 10px; }
+
+  .hero-top { display: flex; justify-content: space-between; align-items: baseline; }
+  .hero-title { font-size: 13px; color: #284473; margin: 0; text-transform: uppercase; letter-spacing: 0.4px; }
+  .hero-value { font-size: 30px; font-weight: 800; color: #1f2a44; }
+  .hero-subline { border-top: 1px solid #dde6f2; margin-top: 8px; padding-top: 8px; }
+
+  .row { display: flex; justify-content: space-between; padding: 7px 0; border-bottom: 1px dashed #eef0f4; font-size: 13.5px; }
   .row:last-child { border-bottom: none; }
   .total { font-weight: 700; padding-top: 6px; margin-top: 6px; border-top: 1px solid #e6e6e6; }
-  .chart { border: 1px solid #e1e1e1; border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
-  .chart-title { font-size: 15px; font-weight: 700; color: #284473; margin-bottom: 8px; }
-  .chart-row { display: grid; grid-template-columns: 90px 1fr 36px; gap: 6px; align-items: center; margin-bottom: 6px; font-size: 13px; }
+  .label-strong { font-weight: 700; color: #1f2a44; }
+
+  .mini-sep { height: 1px; background: #e6e6e6; margin: 6px 0; }
+  .chart { border: 1px solid #e1e1e1; border-radius: 8px; padding: 14px 14px; margin-bottom: 10px; }
+  .chart-row { display: grid; grid-template-columns: 110px 1fr 46px; gap: 10px; align-items: center; margin-bottom: 8px; font-size: 15px; }
   .chart-label { color: #333; }
-  .chart-bar { height: 8px; background: #eef3fb; border-radius: 6px; overflow: hidden; }
+  .chart-bar { height: 12px; background: #eef3fb; border-radius: 8px; overflow: hidden; }
   .chart-fill { height: 100%; background: #f5a623; }
-  .chart-value { text-align: right; color: #284473; font-weight: 700; }
+  .chart-value { text-align: right; color: #284473; font-weight: 700; font-size: 14.5px; }
+  .mp-grid { display: grid; grid-template-columns: 1fr 60px 90px; gap: 10px; align-items: center; padding: 9px 0; border-bottom: 1px dashed #eef0f4; font-size: 14px; }
+  .mp-grid:last-child { border-bottom: none; }
+  .mp-head { font-weight: 700; color: #284473; border-bottom: 1px solid #e6e6e6; padding-bottom: 8px; }
+  .mp-total { font-weight: 700; border-top: 1px solid #e6e6e6; margin-top: 6px; padding-top: 8px; }
+  .mp-desc { padding-right: 6px; }
+  .mp-num { text-align: right; font-variant-numeric: tabular-nums; }
 </style>
 </head>
 <body>
@@ -203,39 +371,68 @@ export default function Index() {
     <div class="range">Desde ${desde} - Hasta ${hasta}</div>
   </div>
 
+  <div class="card-hero">
+    <div class="hero-top">
+      <p class="hero-title">Ingresaron</p>
+      <div class="hero-value">${getStat("ingresaron", "ingresaron")}</div>
+    </div>
+    <div class="hero-subline">
+      <div class="row"><span>En el predio</span><span>${getStat("en_predio", "en_predio")}</span></div>
+      <div class="row"><span>Egresaron</span><span>${getStat("egresaron", "egresaron")}</span></div>
+    </div>
+  </div>
+
+  <div class="section-title">Resumen</div>
   <div class="chart">
-    <div class="chart-title">Resumen</div>
     ${chartRows}
   </div>
 
+  <div class="section-title">Movimientos</div>
   <div class="card">
-    <div class="title">Movimientos</div>
-    <div class="row"><span>Ingresaron</span><span>${statsData.ingresaron ?? 0}</span></div>
-    <div class="row"><span>Egresaron</span><span>${statsData.egresaron ?? 0}</span></div>
-    <div class="row"><span>En el predio</span><span>${statsData.en_predio ?? 0}</span></div>
-    <div class="row total"><span>Total</span><span>${totalMov}</span></div>
+    <div class="row"><span class="label-strong">Ingresaron</span><span>${getStat("ingresaron", "ingresaron")}</span></div>
+    <div class="row"><span class="label-strong">Egresaron</span><span>${getStat("egresaron", "egresaron")}</span></div>
+    <div class="row"><span class="label-strong">En el predio</span><span>${getStat("en_predio", "en_predio")}</span></div>
+
+    <div class="mini-sep"></div>
+
+    <div class="card-title">Informe de ingreso grupal</div>
+    <div class="row"><span>Ingresaron</span><span>${getStat("ingresos_registros", "ingresos_registros")}</span></div>
+    <div class="row"><span>Egresaron</span><span>${getStat("egresos_registros", "egresos_registros")}</span></div>
+    <div class="row"><span>En el predio</span><span>${getStat("en_predio_registros", "en_predio_registros")}</span></div>
   </div>
 
+  <div class="section-title">Personas</div>
   <div class="card">
-    <div class="title">Personas</div>
-    <div class="row"><span>Adultos</span><span>${statsData.adultos ?? 0}</span></div>
-    <div class="row"><span>Menores</span><span>${statsData.menores ?? 0}</span></div>
-    <div class="row"><span>Jubilados</span><span>${statsData.jubilados ?? 0}</span></div>
-    <div class="row total"><span>Total</span><span>${totalPers}</span></div>
+    <div class="card-title">Visitantes</div>
+    <div class="row"><span>Adultos</span><span>${getStat("adultos", "adultos")}</span></div>
+    <div class="row"><span>Menores</span><span>${getStat("menores", "menores")}</span></div>
+    <div class="row"><span>Jubilados</span><span>${getStat("jubilados", "jubilados")}</span></div>
+    <div class="row total"><span>Total</span><span>${totalPersVisit}</span></div>
+
+    <div class="section-sep"></div>
+
+    <div class="card-title">Locales</div>
+    <div class="row"><span>Adultos L</span><span>${getStat("adultos_l", "adultos_l")}</span></div>
+    <div class="row"><span>Menores L</span><span>${getStat("menores_l", "menores_l")}</span></div>
+    <div class="row"><span>Jubilados L</span><span>${getStat("jubilados_l", "jubilados_l")}</span></div>
+    <div class="row total"><span>Total</span><span>${totalPersLocal}</span></div>
   </div>
 
+  <div class="section-title">Visitantes</div>
   <div class="card">
-    <div class="title">Servicios</div>
-    <div class="row"><span>Estacionamientos</span><span>${statsData.estacionamientos ?? 0}</span></div>
-    <div class="row"><span>Motorhome</span><span>${statsData.motorhome ?? 0}</span></div>
-    <div class="row"><span>Bajada lancha</span><span>${statsData.bajada_lancha ?? 0}</span></div>
-    <div class="row total"><span>Total</span><span>${totalServ}</span></div>
+    <div class="card-title">Servicios</div>
+    <div class="row"><span>Motorhome</span><span>${getStat("motorhome", "motorhome")}</span></div>
+    <div class="row"><span>Bajada lancha</span><span>${getStat("bajada_lancha", "bajada_lancha")}</span></div>
+    <div class="row total"><span>Total</span><span>${totalServVisit}</span></div>
   </div>
 
+  <div class="section-title">Estacionamiento</div>
   <div class="card">
-    <div class="title">Local</div>
-    <div class="row"><span>Ingresos locales</span><span>${localPending ?? 0}</span></div>
+    <div class="row"><span>Estacionamientos</span><span>${getStat("estacionamientos", "estacionamientos")}</span></div>
   </div>
+
+  ${mediosSection}
+
 </body>
 </html>`;
     };
@@ -244,9 +441,16 @@ export default function Index() {
         if (!stats) return;
         const desde = formatDate(statsFromDate, true);
         const hasta = formatDate(statsToDate, true);
-        const html = buildStatsHtml(stats, desde, hasta, localPendingCount);
+        const html = buildStatsHtml(stats, desde, hasta, paymentStats);
         try {
-            const { uri } = await Print.printToFileAsync({ html, base64: false });
+            const queueDelay = Number(printQueueDelayMs);
+            const retries = Number(printRetries);
+            const retryDelay = Number(printRetryDelayMs);
+            const { uri } = await printToFileQueued(html, {
+                queueDelayMs: Number.isFinite(queueDelay) ? queueDelay : 1200,
+                retries: Number.isFinite(retries) ? retries : 1,
+                retryDelayMs: Number.isFinite(retryDelay) ? retryDelay : 1500,
+            });
             const canShare = await Sharing.isAvailableAsync();
             if (!canShare) return;
             await Sharing.shareAsync(uri, {
@@ -256,24 +460,6 @@ export default function Index() {
         } catch (e) {
             // noop
         }
-    };
-
-    const parseDMY = (value) => {
-        if (!value) return null;
-        const parts = String(value).split("/");
-        if (parts.length !== 3) return null;
-        const [dd, mm, yyyy] = parts;
-        const d = new Date(Number(yyyy), Number(mm) - 1, Number(dd));
-        return Number.isNaN(d.getTime()) ? null : d;
-    };
-
-    const formatYMD = (date) => {
-        if (!date) return "";
-        const d = new Date(date);
-        const dd = String(d.getDate()).padStart(2, "0");
-        const mm = String(d.getMonth() + 1).padStart(2, "0");
-        const yyyy = d.getFullYear();
-        return `${yyyy}-${mm}-${dd}`;
     };
 
     useEffect(() => {
@@ -290,36 +476,36 @@ export default function Index() {
                 const desde = formatYMD(statsFromDate);
                 const hasta = formatYMD(statsToDate);
                 const endpoint = `ingresos/estadisticas?desde=${desde}&hasta=${hasta}`;
-                const response = await fetchDataFromApi(endpoint);
+                const mediosParams = new URLSearchParams({ desde, hasta }).toString();
+                const mediosEndpoint = `ingresos/MediosDePagosEstadisticas?${mediosParams}`;
+                console.info("mediosEndpoint:", mediosEndpoint);
+                const [response, mediosResponse] = await Promise.all([
+                    fetchDataFromApi(endpoint),
+                    fetchDataFromApi(mediosEndpoint),
+                ]);
                 const payload = response?.data?.data ?? response?.data ?? response;
                 const statsData = Array.isArray(payload) ? payload[0] : payload;
-                if (isActive) setStats(statsData || null);
+                const mediosPayload = mediosResponse?.data?.data ?? mediosResponse?.data ?? mediosResponse;
+                const mediosList = Array.isArray(mediosPayload)
+                    ? mediosPayload
+                    : Array.isArray(mediosPayload?.data)
+                        ? mediosPayload.data
+                        : [];
+                if (isActive) {
+                    setStats(statsData || null);
+                    setPaymentStats(mediosList);
+                }
             } catch (e) {
-                if (isActive) setStats(null);
+                if (isActive) {
+                    setStats(null);
+                    setPaymentStats([]);
+                }
             } finally {
                 if (isActive) setStatsLoading(false);
             }
         };
 
-        const loadLocalPending = async () => {
-            try {
-                const all = await ingresoDb.getAll();
-                const desde = new Date(statsFromDate);
-                const hasta = new Date(statsToDate);
-                const count = all.filter(item => {
-                    const d = parseDMY(item?.ingreso);
-                    if (!d) return false;
-                    return d >= new Date(desde.getFullYear(), desde.getMonth(), desde.getDate()) &&
-                        d <= new Date(hasta.getFullYear(), hasta.getMonth(), hasta.getDate());
-                }).length;
-                if (isActive) setLocalPendingCount(count);
-            } catch {
-                if (isActive) setLocalPendingCount(0);
-            }
-        };
-
         loadStats();
-        loadLocalPending();
 
         return () => { isActive = false; };
     }, [selectedFilter, statsFromDate, statsToDate, netInfo.isConnected]);
@@ -507,7 +693,7 @@ export default function Index() {
                             <View style={styles.statsWebViewWrapper}>
                                 <WebView
                                     originWhitelist={["*"]}
-                                    source={{ html: buildStatsHtml(stats, formatDate(statsFromDate, true), formatDate(statsToDate, true), localPendingCount) }}
+                                    source={{ html: buildStatsHtml(stats, formatDate(statsFromDate, true), formatDate(statsToDate, true), paymentStats) }}
                                     style={[styles.statsWebView, { height: statsWebHeight }]}
                                     scrollEnabled={false}
                                     injectedJavaScript={"setTimeout(function(){window.ReactNativeWebView.postMessage(String(document.body.scrollHeight));}, 100); true;"}
@@ -531,6 +717,71 @@ export default function Index() {
 
             {selectedFilter !== FILTERS.COMPLETOS && (
                 <>
+            {isTodos && (
+                <View style={styles.predioDateContainer}>
+                    <View style={styles.dateRow}>
+                        <View style={styles.dateCol}>
+                            <InputDate
+                                title="Desde"
+                                placeholder="Todos"
+                                value={predioFromDate ? formatDate(predioFromDate, true) : ""}
+                                callback={() => setShowPredioFrom(true)}
+                            />
+                        </View>
+                        <View style={styles.dateCol}>
+                            <InputDate
+                                title="Hasta"
+                                placeholder="Todos"
+                                value={predioToDate ? formatDate(predioToDate, true) : ""}
+                                callback={() => setShowPredioTo(true)}
+                            />
+                        </View>
+                    </View>
+                    {(predioFromDate || predioToDate) && (
+                        <TouchableOpacity
+                            style={styles.clearDateButton}
+                            onPress={() => {
+                                setPredioFromDate(null);
+                                setPredioToDate(null);
+                            }}
+                        >
+                            <Text style={styles.clearDateText}>Limpiar fechas</Text>
+                        </TouchableOpacity>
+                    )}
+                </View>
+            )}
+
+            {isTodos && showPredioFrom && (
+                <DateTimePicker
+                    value={predioFromDate ?? new Date()}
+                    mode="date"
+                    onChange={(event, selectedDate) => {
+                        if (event.type === "dismissed") { setShowPredioFrom(false); return; }
+                        const current = selectedDate || predioFromDate || new Date();
+                        setShowPredioFrom(false);
+                        setPredioFromDate(current);
+                        if (predioToDate && current > predioToDate) {
+                            setPredioToDate(current);
+                        } else if (!predioToDate) {
+                            setPredioToDate(new Date());
+                        }
+                    }}
+                />
+            )}
+
+            {isTodos && showPredioTo && (
+                <DateTimePicker
+                    value={predioToDate ?? predioFromDate ?? new Date()}
+                    mode="date"
+                    onChange={(event, selectedDate) => {
+                        if (event.type === "dismissed") { setShowPredioTo(false); return; }
+                        const current = selectedDate || predioToDate || new Date();
+                        setShowPredioTo(false);
+                        setPredioToDate(current);
+                    }}
+                />
+            )}
+
             <View style={{ paddingHorizontal: 30, marginTop: 10 }}>
                 {/* ------------------- INPUT DE BÚSQUEDA ------------------- */}
                 <View style={styles.searchInputWrapper}>
@@ -665,7 +916,7 @@ export default function Index() {
             )}
 
             <View style={styles.versionContainer}>
-                <Text style={styles.versionText}>v{appVersion}</Text>
+                <Text style={styles.versionText}>Version: {appVersion}</Text>
             </View>
         </SafeAreaView>
     );
@@ -759,6 +1010,21 @@ const styles = StyleSheet.create({
     },
     dateCol: {
         flex: 1,
+    },
+    predioDateContainer: {
+        paddingHorizontal: 30,
+        marginTop: 10,
+    },
+    clearDateButton: {
+        marginTop: 6,
+        alignSelf: "flex-start",
+        paddingVertical: 4,
+        paddingHorizontal: 6,
+    },
+    clearDateText: {
+        fontSize: 12,
+        color: "#284473",
+        fontFamily: "Poppins-Regular",
     },
     statsLoading: {
         paddingVertical: 20,

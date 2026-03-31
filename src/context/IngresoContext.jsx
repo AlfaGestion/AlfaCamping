@@ -4,6 +4,7 @@ import { useIngresoDb } from '@/db/useIngresoDb'
 import { useClienteDb } from '@/db/useClienteDb'
 import { usePreciosDb } from '@/db/usePreciosDb'
 import { useMediosDePagoDb } from '@/db/useMediosDePagoDb'
+import { useConfigDb } from '@/db/useConfigDb'
 import { useApi } from '@/hooks/useApi'
 import { useRouter } from 'expo-router'
 import Toast from 'react-native-toast-message'
@@ -17,6 +18,7 @@ const IngresoContextProvider = ({ children }) => {
   const clienteDb = useClienteDb()
   const preciosDb = usePreciosDb()
   const mediosDePagoDb = useMediosDePagoDb()
+  const configDb = useConfigDb()
   const netInfo = useNetInfo();
 
   const [isLoading, setIsLoading] = useState(false)
@@ -102,6 +104,10 @@ const IngresoContextProvider = ({ children }) => {
   const menoresRef = useRef(null)
   const jubiladosRef = useRef(null)
   const observacionesRef = useRef(null)
+  const isFetchingPrecios = useRef(false)
+  const isFetchingMedios = useRef(false)
+  const autoPricesAttempted = useRef({ onlineFetched: false, offlineRestored: false })
+  const autoMediosAttempted = useRef({ onlineFetched: false, offlineRestored: false })
 
 
   const [dniRefresh, setDniRefresh] = useState(0)
@@ -126,65 +132,198 @@ const IngresoContextProvider = ({ children }) => {
   const { fetchDataFromApi, sendDataToApi } = useApi()
   const [precios, setPrecios] = useState([])
   const [mediosDePago, setMediosDePago] = useState([])
+  const [warnedEmptyPrices, setWarnedEmptyPrices] = useState(false)
+
+  const notifyEmptyPrices = () => {
+    Alert.alert(
+      "Precios sin sincronizar",
+      "La base local está vacía. ¿Desea sincronizar los precios ahora?",
+      [
+        { text: "Cancelar", style: "cancel" },
+        { text: "Sincronizar", onPress: () => fetchPrecios() }
+      ]
+    )
+  }
 
   const fetchPrecios = async () => {
-    if (!netInfo.isConnected) return;
+    if (isFetchingPrecios.current) return false;
+    isFetchingPrecios.current = true;
+    if (!netInfo.isConnected) {
+      if (!warnedEmptyPrices) {
+        const allPrices = await preciosDb.getAll();
+        if (!allPrices || allPrices.length === 0) {
+          setWarnedEmptyPrices(true);
+          notifyEmptyPrices();
+        }
+      }
+      isFetchingPrecios.current = false;
+      return false;
+    }
     try {
       const data = await fetchDataFromApi('ingresos/precios');
       //console.log(data.data)  //25-01-2026
+      if (!data || data?.error) return false;
       
       if (data?.data) {
+        const passwordItem = data.data.find(item => item?.CLAVE === "ING_CLAVEVACIARBASE");
+        if (passwordItem?.VALOR !== undefined && passwordItem?.VALOR !== null && passwordItem?.VALOR !== "") {
+          await configDb.setConfigValue("ING_CLAVEVACIARBASE", String(passwordItem.VALOR));
+        }
+
+        const preciosItems = data.data.filter(item => item?.CLAVE !== "ING_CLAVEVACIARBASE");
         // 1. Enviamos los datos para que SQLite decida qué actualizar
-        await preciosDb.upsertPrecios(data.data);
+        await preciosDb.upsertPrecios(preciosItems);
 
         // 2. Traemos la lista actualizada de la DB local
         const allPrices = await preciosDb.getAll();
         setPrecios(allPrices);
+        if (allPrices && allPrices.length > 0) {
+          await preciosDb.saveBackup(allPrices);
+        }
+        if ((!allPrices || allPrices.length === 0) && !warnedEmptyPrices) {
+          setWarnedEmptyPrices(true);
+          notifyEmptyPrices();
+        }
+        return true;
       }
+      return false;
     } catch (error) {
       console.error("Error fetching precios:", error);
+      return false;
+    } finally {
+      isFetchingPrecios.current = false;
     }
   };
 
   const fetchMediosDePago = async () => {
-    if (!netInfo.isConnected) return;
-    const data = await fetchDataFromApi('ingresos/medios_de_pago')
+    if (isFetchingMedios.current) return false;
+    isFetchingMedios.current = true;
+    try {
+      let okRemote = false;
+      let attemptedRemote = false;
+      if (netInfo.isConnected) {
+        attemptedRemote = true;
+        const data = await fetchDataFromApi('ingresos/medios_de_pago')
 
-    if (data?.data) {
-      await mediosDePagoDb.deleteAll()
-      await mediosDePagoDb.createOrUpdate(data.data)
+        if (!data || data?.error) {
+          okRemote = false;
+        } else if (data?.data) {
+          await mediosDePagoDb.deleteAll()
+          await mediosDePagoDb.createOrUpdate(data.data)
+          okRemote = true;
+
+          if (data.status_code == 200) {
+            // Toast.show({
+            //   type: "success",
+            //   text1: "Medios de pago actualizados.",
+            //   text2: "",
+            //   visibilityTime: 1777,
+            //   position: "bottom",
+            //   autoHide: true,
+            //   bottomOffset: 120,
+            //   text1Style: { fontFamily: "Poppins-Bold", fontSize: 15 },
+            //   text2Style: { fontFamily: "Poppins-Regular", fontSize: 13 },
+            //   swipeable: true,
+            // })
+            null
+          } else {
+            Toast.show({
+              type: "error",
+              text1: "Error al actualizar los medios de pago.",
+              text2: "",
+              visibilityTime: 1777,
+              position: "bottom",
+              autoHide: true,
+              bottomOffset: 120,
+              text1Style: { fontFamily: "Poppins-Bold", fontSize: 15 },
+              text2Style: { fontFamily: "Poppins-Regular", fontSize: 13 },
+              swipeable: true,
+            })
+            okRemote = false;
+          }
+        }
+      }
+
+      let allMP = await mediosDePagoDb.getAll()
+      if (!allMP || allMP.length === 0) {
+        await mediosDePagoDb.ensureDefaults()
+        allMP = await mediosDePagoDb.getAll()
+      }
+      setMediosDePago(allMP)
+      if (okRemote && allMP && allMP.length > 0) {
+        await mediosDePagoDb.saveBackup(allMP)
+      }
+      return attemptedRemote ? okRemote : false;
+    } finally {
+      isFetchingMedios.current = false;
+    }
+  }
+
+  const hasPreciosBackup = async () => {
+    try {
+      const backup = await preciosDb.getBackupAll()
+      return Array.isArray(backup) && backup.length > 0
+    } catch (error) {
+      console.error(error)
+      return false
+    }
+  }
+
+  const hasMediosBackup = async () => {
+    try {
+      const backup = await mediosDePagoDb.getBackupAll()
+      return Array.isArray(backup) && backup.length > 0
+    } catch (error) {
+      console.error(error)
+      return false
+    }
+  }
+
+  const restorePreciosFromBackup = async () => {
+    try {
+      const restored = await preciosDb.restoreFromBackup()
+      if (!restored) return false
+
+      const allPrices = await preciosDb.getAll()
+      setPrecios(allPrices)
+      return true
+    } catch (error) {
+      console.error(error)
+      Toast.show({
+        type: "error",
+        text1: "Error al recuperar precios",
+        text2: "No se pudieron restaurar los precios.",
+        position: "bottom",
+        bottomOffset: 120,
+        autoHide: true,
+        text1Style: { fontFamily: "Poppins-Bold", fontSize: 15 },
+        text2Style: { fontFamily: "Poppins-Regular", fontSize: 13 },
+      })
+      return false
+    }
+  }
+
+  const restoreMediosDePagoFromBackup = async () => {
+    try {
+      const restored = await mediosDePagoDb.restoreFromBackup()
+      if (!restored) return false
 
       const allMP = await mediosDePagoDb.getAll()
       setMediosDePago(allMP)
-
-      if (data.status_code == 200) {
-        // Toast.show({
-        //   type: "success",
-        //   text1: "Medios de pago actualizados.",
-        //   text2: "",
-        //   visibilityTime: 1777,
-        //   position: "bottom",
-        //   autoHide: true,
-        //   bottomOffset: 120,
-        //   text1Style: { fontFamily: "Poppins-Bold", fontSize: 15 },
-        //   text2Style: { fontFamily: "Poppins-Regular", fontSize: 13 },
-        //   swipeable: true,
-        // })
-        null
-      } else {
-        Toast.show({
-          type: "error",
-          text1: "Error al actualizar los medios de pago.",
-          text2: "",
-          visibilityTime: 1777,
-          position: "bottom",
-          autoHide: true,
-          bottomOffset: 120,
-          text1Style: { fontFamily: "Poppins-Bold", fontSize: 15 },
-          text2Style: { fontFamily: "Poppins-Regular", fontSize: 13 },
-          swipeable: true,
-        })
-      }
+      return true
+    } catch (error) {
+      console.error(error)
+      Toast.show({
+        type: "error",
+        text1: "Error al recuperar medios de pago",
+        text2: "No se pudieron restaurar los medios de pago.",
+        position: "bottom",
+        bottomOffset: 120,
+        autoHide: true,
+        text1Style: { fontFamily: "Poppins-Bold", fontSize: 15 },
+        text2Style: { fontFamily: "Poppins-Regular", fontSize: 13 },
+      })
+      return false
     }
   }
 
@@ -319,6 +458,57 @@ const IngresoContextProvider = ({ children }) => {
     fetchMediosDePago()
   }, [])
 
+  useEffect(() => {
+    let mounted = true
+    const pricesAreZero = (list) => {
+      if (!Array.isArray(list) || list.length === 0) return true
+      return list.every(item => !Number(item?.precio ?? item?.VALOR))
+    }
+    const autoEnsurePrecios = async () => {
+      try {
+        const allPrices = await preciosDb.getAll()
+        if (!mounted || !pricesAreZero(allPrices)) return
+        if (netInfo.isConnected) {
+          if (autoPricesAttempted.current.onlineFetched) return
+          autoPricesAttempted.current.onlineFetched = true
+          await fetchPrecios()
+        } else {
+          if (autoPricesAttempted.current.offlineRestored) return
+          autoPricesAttempted.current.offlineRestored = true
+          await restorePreciosFromBackup()
+        }
+      } catch (error) {
+        // ignore
+      }
+    }
+    autoEnsurePrecios()
+    return () => { mounted = false }
+  }, [netInfo.isConnected, fetchPrecios, restorePreciosFromBackup, preciosDb])
+
+  useEffect(() => {
+    let mounted = true
+    const mediosVacios = (list) => !Array.isArray(list) || list.length === 0
+    const autoEnsureMedios = async () => {
+      try {
+        const allMedios = await mediosDePagoDb.getAll()
+        if (!mounted || !mediosVacios(allMedios)) return
+        if (netInfo.isConnected) {
+          if (autoMediosAttempted.current.onlineFetched) return
+          autoMediosAttempted.current.onlineFetched = true
+          await fetchMediosDePago()
+        } else {
+          if (autoMediosAttempted.current.offlineRestored) return
+          autoMediosAttempted.current.offlineRestored = true
+          await restoreMediosDePagoFromBackup()
+        }
+      } catch (error) {
+        // ignore
+      }
+    }
+    autoEnsureMedios()
+    return () => { mounted = false }
+  }, [netInfo.isConnected, fetchMediosDePago, restoreMediosDePagoFromBackup, mediosDePagoDb])
+
   const handleDniSubmit = () => {
     if (!ingreso?.dni) {
       Alert.alert(
@@ -347,6 +537,10 @@ const IngresoContextProvider = ({ children }) => {
         nombreRef?.current?.focus()
       }, 500)
     }
+  }
+
+  const refreshDniInput = () => {
+    setDniRefresh(prevKey => prevKey + 1)
   }
 
   const handleNombreSubmit = () => {
@@ -622,38 +816,101 @@ const IngresoContextProvider = ({ children }) => {
     }
   }
 
-  const preciosArr = {
-    jubilados: precios.find(item => item.CLAVE === "ING_JUBILADO")?.VALOR || 0,
-    bajada_lancha: precios.find(item => item.CLAVE === "ING_BAJADALANCHA")?.VALOR || 0,
-    adultos: precios.find(item => item.CLAVE === "ING_MAYOR")?.VALOR || 0,
-    menores: precios.find(item => item.CLAVE === "ING_MENOR")?.VALOR || 0,
-
-    jubiladosL: precios.find(item => item.CLAVE === "INGL_JUBILADO")?.VALOR || 0,
-    adultosL: precios.find(item => item.CLAVE === "INGL_MAYOR")?.VALOR || 0,
-    menoresL: precios.find(item => item.CLAVE === "INGL_MENOR")?.VALOR || 0,
-
-    jubiladosD: precios.find(item => item.CLAVE === "INGD_JUBILADO")?.VALOR || 0,
-    adultosD: precios.find(item => item.CLAVE === "INGD_MAYOR")?.VALOR || 0,
-    menoresD: precios.find(item => item.CLAVE === "INGD_MENOR")?.VALOR || 0,
+  const getPrecioFromList = (codigo) => {
+    const item = precios.find(p => p?.codigo === codigo || p?.CLAVE === codigo);
+    const value = item?.precio ?? item?.VALOR;
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : 0;
   };
 
+  const isSameDay = ingresoString && egresoString && ingresoString === egresoString;
 
-  // Calcular el total basado en las cantidades y precios
-  const calcularTotal = () => {
-    const subtotal = Object.keys(preciosArr).reduce((acc, field) => {
-      return acc + (ingreso?.[field] || 0) * preciosArr[field];
-    }, 0);
+  const priceCodes = {
+    adultos: {
+      normal: "ING_MAYOR",
+      diurno: "INGD_MAYOR",
+      local: "INGL_MAYOR",
+      localDiurno: "INGLD_MAYOR",
+    },
+    menores: {
+      normal: "ING_MENOR",
+      diurno: "INGD_MENOR",
+      local: "INGL_MENOR",
+      localDiurno: "INGLD_MENOR",
+    },
+    jubilados: {
+      normal: "ING_JUBILADO",
+      diurno: "INGD_JUBILADO",
+      local: "INGL_JUBILADO",
+      localDiurno: "INGLD_JUBILADO",
+    },
+    bajada_lancha: {
+      normal: "ING_BAJADALANCHA",
+      local: "INGL_BAJADALANCHA",
+    },
+  };
 
-    const descuento = ingreso?.descuento || 0;
-    return (subtotal * (1 - descuento / 100)) * ingreso.estadia;
+  const getUnitPrice = (key, local) => {
+    const codes = priceCodes[key];
+    if (!codes) return 0;
+    if (key === "bajada_lancha") {
+      return getPrecioFromList(local ? codes.local : codes.normal);
+    }
+    const code = local
+      ? (isSameDay ? codes.localDiurno : codes.local)
+      : (isSameDay ? codes.diurno : codes.normal);
+    return getPrecioFromList(code);
+  };
+
+  const getHydratedPrice = (value, fallback) => {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric) && numeric > 0) return numeric;
+    const next = Number(fallback);
+    return Number.isFinite(next) ? next : 0;
   };
 
   const calcularSubTotal = () => {
-    const subtotal = Object.keys(preciosArr).reduce((acc, field) => {
-      return acc + (ingreso?.[field] || 0) * preciosArr[field];
-    }, 0);
-    return subtotal * ingreso.estadia;
+    const estadiaNumber = Number(ingreso?.estadia) || 1;
+    const baseEstadia = ["adultos", "menores", "jubilados"].reduce((acc, key) => {
+      const v = (Number(ingreso?.[key]) || 0) * getUnitPrice(key, false);
+      const l = (Number(ingreso?.[`${key}L`]) || 0) * getUnitPrice(key, true);
+      return acc + v + l;
+    }, 0) * estadiaNumber;
+
+    const bajadaSubtotal =
+      (Number(ingreso?.bajada_lancha) || 0) * getUnitPrice("bajada_lancha", false) +
+      (Number(ingreso?.bajada_lanchaL) || 0) * getUnitPrice("bajada_lancha", true);
+
+    const motorhomeSubtotal =
+      (Number(ingreso?.adicional) || 0) * getPrecioFromList("ING_MOTORHOME") +
+      (Number(ingreso?.adicionalL) || 0) * getPrecioFromList("INGL_MOTORHOME");
+
+    const estacionamientoSubtotal = ingreso?.estacionamiento
+      ? getPrecioFromList("ING_ESTACIONAMIENTO") * estadiaNumber
+      : 0;
+
+    return baseEstadia + bajadaSubtotal + motorhomeSubtotal + estacionamientoSubtotal;
   };
+
+  const calcularTotal = () => {
+    const subtotal = calcularSubTotal();
+    const descuento = Number(ingreso?.descuento) || 0;
+    return subtotal - (subtotal * descuento) / 100;
+  };
+
+  const buildPrecioPayload = () => ({
+    precio_adultos: getHydratedPrice(ingreso?.precio_adultos, getUnitPrice("adultos", false)),
+    precio_menores: getHydratedPrice(ingreso?.precio_menores, getUnitPrice("menores", false)),
+    precio_jubilados: getHydratedPrice(ingreso?.precio_jubilados, getUnitPrice("jubilados", false)),
+    precio_bajada_lancha: getHydratedPrice(ingreso?.precio_bajada_lancha, getUnitPrice("bajada_lancha", false)),
+    precio_adultosL: getHydratedPrice(ingreso?.precio_adultosL, getUnitPrice("adultos", true)),
+    precio_menoresL: getHydratedPrice(ingreso?.precio_menoresL, getUnitPrice("menores", true)),
+    precio_jubiladosL: getHydratedPrice(ingreso?.precio_jubiladosL, getUnitPrice("jubilados", true)),
+    precio_bajada_lanchaL: getHydratedPrice(ingreso?.precio_bajada_lanchaL, getUnitPrice("bajada_lancha", true)),
+    precio_adicional: getHydratedPrice(ingreso?.precio_adicional, getPrecioFromList("ING_MOTORHOME")),
+    precio_adicionalL: getHydratedPrice(ingreso?.precio_adicionalL, getPrecioFromList("INGL_MOTORHOME")),
+    precio_estacionamiento: getHydratedPrice(ingreso?.precio_estacionamiento, getPrecioFromList("ING_ESTACIONAMIENTO")),
+  });
 
 
   const create = async () => {
@@ -661,6 +918,7 @@ const IngresoContextProvider = ({ children }) => {
     try {
       const totalCalculado = calcularTotal();
       const subtotalCalculado = calcularSubTotal()
+      const preciosPayload = buildPrecioPayload();
 
       // console.log("CREANDO: ", {
       //   subtotal: ingreso?.subtotal || 0,
@@ -674,27 +932,17 @@ const IngresoContextProvider = ({ children }) => {
         observaciones: ingreso?.observaciones,
 
         adultos: ingreso?.adultos,
-        precio_adultos: ingreso?.precio_adultos,
         menores: ingreso?.menores,
-        precio_menores: ingreso?.precio_menores,
         jubilados: ingreso?.jubilados,
-        precio_jubilados: ingreso?.precio_jubilados,
         bajada_lancha: ingreso?.bajada_lancha,
-        precio_bajada_lancha: ingreso?.precio_bajada_lancha,
         adultosL: ingreso?.adultosL,
-        precio_adultosL: ingreso?.precio_adultosL,
         menoresL: ingreso?.menoresL,
-        precio_menoresL: ingreso?.precio_menoresL,
         jubiladosL: ingreso?.jubiladosL,
-        precio_jubiladosL: ingreso?.precio_jubiladosL,
         bajada_lanchaL: ingreso?.bajada_lanchaL,
-        precio_bajada_lanchaL: ingreso?.precio_bajada_lanchaL,
         adicional: ingreso?.adicional,
-        precio_adicional: ingreso?.precio_adicional,
         adicionalL: ingreso?.adicionalL,
-        precio_adicionalL: ingreso?.precio_adicionalL,
         estacionamiento: ingreso?.estacionamiento,
-        precio_estacionamiento: ingreso?.precio_estacionamiento,
+        ...preciosPayload,
 
         parcela: ingreso?.parcela,
         dni: ingreso?.dni,
@@ -709,8 +957,8 @@ const IngresoContextProvider = ({ children }) => {
         kayak: !!ingreso?.kayak,
         embarcado: !!ingreso?.embarcado,
         descuento: ingreso?.descuento || 0,
-        subtotal: ingreso?.subtotal || 0,
-        total: ingreso?.total || 0,
+        subtotal: subtotalCalculado || 0,
+        total: totalCalculado || 0,
         sincronizado: false,
         // egreso_real: null,
         egresar: false,
@@ -768,6 +1016,7 @@ const IngresoContextProvider = ({ children }) => {
     try {
       const totalCalculado = calcularTotal();
       const subtotalCalculado = calcularSubTotal()
+      const preciosPayload = buildPrecioPayload();
 
       await ingresoDb.update({
         id: ingreso?.id,
@@ -777,27 +1026,17 @@ const IngresoContextProvider = ({ children }) => {
         observaciones: ingreso?.observaciones,
 
         adultos: ingreso?.adultos,
-        precio_adultos: ingreso?.precio_adultos,
         menores: ingreso?.menores,
-        precio_menores: ingreso?.precio_menores,
         jubilados: ingreso?.jubilados,
-        precio_jubilados: ingreso?.precio_jubilados,
         bajada_lancha: ingreso?.bajada_lancha,
-        precio_bajada_lancha: ingreso?.precio_bajada_lancha,
         adultosL: ingreso?.adultosL,
-        precio_adultosL: ingreso?.precio_adultosL,
         menoresL: ingreso?.menoresL,
-        precio_menoresL: ingreso?.precio_menoresL,
         jubiladosL: ingreso?.jubiladosL,
-        precio_jubiladosL: ingreso?.precio_jubiladosL,
         bajada_lanchaL: ingreso?.bajada_lanchaL,
-        precio_bajada_lanchaL: ingreso?.precio_bajada_lanchaL,
         adicional: ingreso?.adicional,
-        precio_adicional: ingreso?.precio_adicional,
         adicionalL: ingreso?.adicionalL,
-        precio_adicionalL: ingreso?.precio_adicionalL,
         estacionamiento: ingreso?.estacionamiento,
-        precio_estacionamiento: ingreso?.precio_estacionamiento,
+        ...preciosPayload,
 
         parcela: ingreso?.parcela,
         dni: ingreso?.dni,
@@ -813,8 +1052,8 @@ const IngresoContextProvider = ({ children }) => {
         kayak: !!ingreso?.kayak,
         embarcado: !!ingreso?.embarcado,
         descuento: ingreso?.descuento || 0,
-        subtotal: ingreso?.subtotal || 0,
-        total: ingreso?.total || 0,
+        subtotal: subtotalCalculado || 0,
+        total: totalCalculado || 0,
         sincronizado: false,
         local: ingreso?.local,
         medio_de_pago: ingreso?.medio_de_pago,
@@ -863,6 +1102,7 @@ const IngresoContextProvider = ({ children }) => {
     try {
       const totalCalculado = calcularTotal();
       const subtotalCalculado = calcularSubTotal()
+      const preciosPayload = buildPrecioPayload();
 
       // console.log('ENVIOO: ',
       //   {
@@ -911,27 +1151,17 @@ const IngresoContextProvider = ({ children }) => {
         observaciones: ingreso?.observaciones,
 
         adultos: ingreso?.adultos,
-        precio_adultos: ingreso?.precio_adultos,
         menores: ingreso?.menores,
-        precio_menores: ingreso?.precio_menores,
         jubilados: ingreso?.jubilados,
-        precio_jubilados: ingreso?.precio_jubilados,
         bajada_lancha: ingreso?.bajada_lancha,
-        precio_bajada_lancha: ingreso?.precio_bajada_lancha,
         adultosL: ingreso?.adultosL,
-        precio_adultosL: ingreso?.precio_adultosL,
         menoresL: ingreso?.menoresL,
-        precio_menoresL: ingreso?.precio_menoresL,
         jubiladosL: ingreso?.jubiladosL,
-        precio_jubiladosL: ingreso?.precio_jubiladosL,
         bajada_lanchaL: ingreso?.bajada_lanchaL,
-        precio_bajada_lanchaL: ingreso?.precio_bajada_lanchaL,
         adicional: ingreso?.adicional,
-        precio_adicional: ingreso?.precio_adicional,
         adicionalL: ingreso?.adicionalL,
-        precio_adicionalL: ingreso?.precio_adicionalL,
         estacionamiento: ingreso?.estacionamiento,
-        precio_estacionamiento: ingreso?.precio_estacionamiento,
+        ...preciosPayload,
 
         parcela: ingreso?.parcela,
         dni: ingreso?.dni,
@@ -947,8 +1177,8 @@ const IngresoContextProvider = ({ children }) => {
         kayak: !!ingreso?.kayak,
         embarcado: !!ingreso?.embarcado,
         descuento: ingreso?.descuento || 0,
-        subtotal: ingreso?.subtotal || 0,
-        total: ingreso?.total || 0,
+        subtotal: subtotalCalculado || 0,
+        total: totalCalculado || 0,
         egreso_real: new Date().toISOString(),
         egresar: true,
         local: ingreso?.local,
@@ -999,6 +1229,7 @@ const IngresoContextProvider = ({ children }) => {
     try {
       const totalCalculado = calcularTotal();
       const subtotalCalculado = calcularSubTotal()
+      const preciosPayload = buildPrecioPayload();
 
       await ingresoDb.update({
         id: ingreso?.id,
@@ -1008,27 +1239,17 @@ const IngresoContextProvider = ({ children }) => {
         observaciones: ingreso?.observaciones,
 
         adultos: ingreso?.adultos,
-        precio_adultos: ingreso?.precio_adultos,
         menores: ingreso?.menores,
-        precio_menores: ingreso?.precio_menores,
         jubilados: ingreso?.jubilados,
-        precio_jubilados: ingreso?.precio_jubilados,
         bajada_lancha: ingreso?.bajada_lancha,
-        precio_bajada_lancha: ingreso?.precio_bajada_lancha,
         adultosL: ingreso?.adultosL,
-        precio_adultosL: ingreso?.precio_adultosL,
         menoresL: ingreso?.menoresL,
-        precio_menoresL: ingreso?.precio_menoresL,
         jubiladosL: ingreso?.jubiladosL,
-        precio_jubiladosL: ingreso?.precio_jubiladosL,
         bajada_lanchaL: ingreso?.bajada_lanchaL,
-        precio_bajada_lanchaL: ingreso?.precio_bajada_lanchaL,
         adicional: ingreso?.adicional,
-        precio_adicional: ingreso?.precio_adicional,
         adicionalL: ingreso?.adicionalL,
-        precio_adicionalL: ingreso?.precio_adicionalL,
         estacionamiento: ingreso?.estacionamiento,
-        precio_estacionamiento: ingreso?.precio_estacionamiento,
+        ...preciosPayload,
 
         parcela: ingreso?.parcela,
         dni: ingreso?.dni,
@@ -1044,8 +1265,8 @@ const IngresoContextProvider = ({ children }) => {
         kayak: !!ingreso?.kayak,
         embarcado: !!ingreso?.embarcado,
         descuento: ingreso?.descuento || 0,
-        subtotal: ingreso?.subtotal || 0,
-        total: ingreso?.total || 0,
+        subtotal: subtotalCalculado || 0,
+        total: totalCalculado || 0,
         sincronizado: false,
         local: ingreso?.local,
         medio_de_pago: ingreso?.medio_de_pago,
@@ -1272,6 +1493,7 @@ const IngresoContextProvider = ({ children }) => {
         dniRefresh, nombreRefresh, parcelaRefresh, nacionalidadRefresh, direccionRefresh, ciudadRefresh, telefonoRefresh, patenteRefresh, modeloRefresh,
         bajadaRefresh, amarreRefresh, mayoresRefresh, menoresRefresh, jubiladosRefresh, observacionesRefresh,
 
+        refreshDniInput,
         handleDniSubmit, handleNombreSubmit, handleParcelaSubmit, handleNacionalidadSubmit, handleDireccionSubmit, handleCiudadSubmit, handleTelefonoSubmit, handlePatenteSubmit, handleModeloSubmit,
         handleBajadaSubmit, handleAmarreSubmit, handleMayoresSubmit, handleMenoresSubmit, handleJubiladosSubmit, handleObservacionesSubmit,
 
@@ -1297,7 +1519,9 @@ const IngresoContextProvider = ({ children }) => {
         mediosDePago, setMediosDePago,
         anulled,
 
-        fetchPrecios, fetchMediosDePago
+        fetchPrecios, fetchMediosDePago,
+        restorePreciosFromBackup, restoreMediosDePagoFromBackup,
+        hasPreciosBackup, hasMediosBackup
       }}
     >
       {children}

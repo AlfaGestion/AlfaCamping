@@ -30,3 +30,32 @@ export function currencyFormat(num) {
   }
   // return parseFloat(num).toLocaleString('en-IN')
 }
+
+export function parseNumber(value) {
+  if (value === undefined || value === null || value === "") return 0;
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+
+  let s = String(value).trim();
+  if (!s) return 0;
+
+  // Remove currency symbols and spaces
+  s = s.replace(/\s/g, "").replace(/[$€£]/g, "");
+
+  const hasComma = s.includes(",");
+  const hasDot = s.includes(".");
+
+  if (hasComma && hasDot) {
+    // Use the last separator as decimal, remove the other
+    if (s.lastIndexOf(",") > s.lastIndexOf(".")) {
+      s = s.replace(/\./g, "").replace(/,/g, ".");
+    } else {
+      s = s.replace(/,/g, "");
+    }
+  } else if (hasComma && !hasDot) {
+    s = s.replace(/,/g, ".");
+  }
+
+  s = s.replace(/[^0-9.-]/g, "");
+  const n = parseFloat(s);
+  return Number.isFinite(n) ? n : 0;
+}

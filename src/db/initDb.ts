@@ -1,13 +1,19 @@
 import { type SQLiteDatabase } from "expo-sqlite";
 
-const API_URI = process.env.EXPO_PUBLIC_API_URI;
-const USERNAME = process.env.EXPO_PUBLIC_USERNAME;
-const PASSWORD = process.env.EXPO_PUBLIC_PASSWORD;
-const CUSTOMER_ID = process.env.EXPO_PUBLIC_CUSTOMER_ID;
-const DATABASE_ID = process.env.EXPO_PUBLIC_DATABASE_ID;
-const PRINTER_IP = process.env.EXPO_PUBLIC_IP_IMP_BARRERA;
-
 export async function initDb(db: SQLiteDatabase) {
+  const ensureConfigKey = async (clave: string, valor = "") => {
+    const rows: any = await db.getAllAsync(
+      "SELECT COUNT(*) as count FROM configuracion WHERE clave = ?;",
+      [clave]
+    );
+    if (!rows?.[0]?.count) {
+      await db.runAsync(
+        "INSERT INTO configuracion (clave, valor) VALUES (?, ?);",
+        [clave, valor]
+      );
+    }
+  };
+
   // 1. Tabla de Configuración
   await db.execAsync(`
     CREATE TABLE IF NOT EXISTS configuracion (id INTEGER PRIMARY KEY AUTOINCREMENT, clave TEXT, valor TEXT);
@@ -16,14 +22,29 @@ export async function initDb(db: SQLiteDatabase) {
   const resConfig: any = await db.getAllAsync("SELECT COUNT(*) as count FROM configuracion;");
   if (resConfig[0].count === 0) {
     await db.execAsync(`
-      INSERT INTO configuracion (clave, valor) VALUES ('api_uri', '${API_URI}');
-      INSERT INTO configuracion (clave, valor) VALUES ('username', '${USERNAME}');
-      INSERT INTO configuracion (clave, valor) VALUES ('password', '${PASSWORD}');
-      INSERT INTO configuracion (clave, valor) VALUES ('customer_id', '${CUSTOMER_ID}');
-      INSERT INTO configuracion (clave, valor) VALUES ('database_id', '${DATABASE_ID}');
-      INSERT INTO configuracion (clave, valor) VALUES ('cfg_impresora_barrera_1', '${PRINTER_IP}');
+      INSERT INTO configuracion (clave, valor) VALUES ('api_uri', '');
+      INSERT INTO configuracion (clave, valor) VALUES ('username', '');
+      INSERT INTO configuracion (clave, valor) VALUES ('password', '');
+      INSERT INTO configuracion (clave, valor) VALUES ('customer_id', '');
+      INSERT INTO configuracion (clave, valor) VALUES ('database_id', '');
+      INSERT INTO configuracion (clave, valor) VALUES ('cfg_impresora_barrera_1', '');
+      INSERT INTO configuracion (clave, valor) VALUES ('print_offset_mm', '');
+      INSERT INTO configuracion (clave, valor) VALUES ('print_queue_delay_ms', '');
+      INSERT INTO configuracion (clave, valor) VALUES ('print_retries', '');
+      INSERT INTO configuracion (clave, valor) VALUES ('print_retry_delay_ms', '');
     `);
   }
+
+  await ensureConfigKey("api_uri", "");
+  await ensureConfigKey("username", "");
+  await ensureConfigKey("password", "");
+  await ensureConfigKey("customer_id", "");
+  await ensureConfigKey("database_id", "");
+  await ensureConfigKey("cfg_impresora_barrera_1", "");
+  await ensureConfigKey("print_offset_mm", "");
+  await ensureConfigKey("print_queue_delay_ms", "");
+  await ensureConfigKey("print_retries", "");
+  await ensureConfigKey("print_retry_delay_ms", "");
 
   // 2. Tabla de Ingresos
   await db.execAsync(`
@@ -41,24 +62,16 @@ export async function initDb(db: SQLiteDatabase) {
     );`
   );
   const ingresosColumns: any = await db.getAllAsync("PRAGMA table_info(ingresos);");
-  const ingresosColumnNames = new Set(
-  ingresosColumns.map((col: any) => String(col?.name))
-  );
-  const addIngresoColumnIfMissing = async (column: string, type: string) => {
-    if (ingresosColumnNames.has(column)) return;
-    try {
-      await db.execAsync(`ALTER TABLE ingresos ADD COLUMN ${column} ${type};`);
-    } catch (e: any) {
-      const msg = String(e?.message ?? e);
-      if (!/duplicate column name/i.test(msg)) {
-        throw e;
-      }
-    }
-  };
-  await addIngresoColumnIfMissing("estacionamiento", "INTEGER");
-  await addIngresoColumnIfMissing("precio_estacionamiento", "INTEGER");
-  await addIngresoColumnIfMissing("hora_ingreso", "TEXT");
-  await addIngresoColumnIfMissing("telefono", "TEXT");
+  const ingresosColumnNames = new Set(ingresosColumns.map((col: any) => col.name));
+  if (!ingresosColumnNames.has("estacionamiento")) {
+    await db.execAsync("ALTER TABLE ingresos ADD COLUMN estacionamiento INTEGER;");
+  }
+  if (!ingresosColumnNames.has("precio_estacionamiento")) {
+    await db.execAsync("ALTER TABLE ingresos ADD COLUMN precio_estacionamiento INTEGER;");
+  }
+  if (!ingresosColumnNames.has("hora_ingreso")) {
+    await db.execAsync("ALTER TABLE ingresos ADD COLUMN hora_ingreso TEXT;");
+  }
 
   // 3. Tabla de Clientes
   await db.execAsync(
@@ -77,10 +90,21 @@ export async function initDb(db: SQLiteDatabase) {
   await db.execAsync(
     "CREATE TABLE IF NOT EXISTS mediosDePago (codigo TEXT PRIMARY KEY, descripcion TEXT)"
   );
+  await db.execAsync(
+    "CREATE TABLE IF NOT EXISTS mediosDePago_backup (codigo TEXT PRIMARY KEY, descripcion TEXT)"
+  );
 
   // 5. Tabla de Precios (Aseguramos que se cree correctamente)
   await db.execAsync(`
     CREATE TABLE IF NOT EXISTS precios (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, 
+      codigo TEXT UNIQUE NOT NULL, 
+      precio REAL DEFAULT 0, 
+      descripcion TEXT
+    );
+  `);
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS precios_backup (
       id INTEGER PRIMARY KEY AUTOINCREMENT, 
       codigo TEXT UNIQUE NOT NULL, 
       precio REAL DEFAULT 0, 

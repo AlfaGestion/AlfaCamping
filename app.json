@@ -1,8 +1,8 @@
 {
   "expo": {
     "name": "AlfaIngresos",
-    "slug": "AlfaIngresos",
-    "owner": "albertofavioantunez",
+    "slug": "alfacamping",
+    "owner": "marcoslromero23",
     "version": "1.0.0",
     "orientation": "default",
     "icon": "./assets/images/icon.png",
@@ -49,7 +49,7 @@
         "origin": false
       },
       "eas": {
-        "projectId": "c0965618-74d0-4f46-b7a8-f7407e9fab9c"
+        "projectId": "b95fcc8e-8b0e-49db-8099-2a5ca24e543e"
       }
     }
   }

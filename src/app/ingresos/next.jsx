@@ -1,7 +1,7 @@
-import { useState, useEffect, useContext, useMemo, useCallback } from "react";
+import { useState, useEffect, useContext, useMemo, useCallback, useRef } from "react";
 import {
   Text, View, TextInput, ScrollView, TouchableOpacity,
-  KeyboardAvoidingView, TouchableWithoutFeedback, Keyboard, Alert, StyleSheet, BackHandler
+  KeyboardAvoidingView, TouchableWithoutFeedback, Keyboard, Alert, StyleSheet, BackHandler, ActivityIndicator
 } from "react-native";
 import { Picker } from '@react-native-picker/picker';
 import { useRouter } from "expo-router";
@@ -9,12 +9,14 @@ import { useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import Checkbox from "expo-checkbox";
 
-import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 
 import { IngresoContext } from "@/context/IngresoContext";
+import { useConfigDb } from "@/db/useConfigDb";
 import Colors from "@/styles/Colors";
 import { buildIngresoHtml } from "@/utils/ingresoPrint";
+import { printHtmlQueued, printToFileQueued } from "@/utils/printQueue";
+import { parseNumber } from "@/utils/Utils";
 
 const CATEGORIES = [
   {
@@ -50,12 +52,14 @@ export default function NewTaskScreen() {
     ingreso, setIngreso, mediosDePago,
     fetchPrecios, fetchMediosDePago, handleSaveIngreso,
     precios: preciosArr,
+    restorePreciosFromBackup, restoreMediosDePagoFromBackup,
+    hasPreciosBackup, hasMediosBackup,
   } = useContext(IngresoContext);
-
-  useEffect(() => {
-    fetchPrecios();
-    fetchMediosDePago();
-  }, []);
+  const configDb = useConfigDb();
+  const [printOffsetMm, setPrintOffsetMm] = useState("");
+  const [printQueueDelayMs, setPrintQueueDelayMs] = useState("");
+  const [printRetries, setPrintRetries] = useState("");
+  const [printRetryDelayMs, setPrintRetryDelayMs] = useState("");
 
   useFocusEffect(useCallback(() => {
     const onBackPress = () => {
@@ -123,17 +127,132 @@ export default function NewTaskScreen() {
       const useDiurno = isSameDay && cat.dbKeyD && cat.dbKeyLD;
       const key = useDiurno ? cat.dbKeyD : cat.dbKey;
       const keyL = useDiurno ? cat.dbKeyLD : cat.dbKeyL;
-      p[cat.key] = preciosArr.find(item => item.codigo === key)?.precio || 0;
-      p[`${cat.key}L`] = preciosArr.find(item => item.codigo === keyL)?.precio || 0;
+      p[cat.key] = parseNumber(preciosArr.find(item => item.codigo === key)?.precio);
+      p[`${cat.key}L`] = parseNumber(preciosArr.find(item => item.codigo === keyL)?.precio);
     });
 
     // Mapeo explícito para Motorhome
-    p.adicional = preciosArr.find(item => item.codigo === "ING_MOTORHOME")?.precio || 0;
-    p.adicionalL = preciosArr.find(item => item.codigo === "INGL_MOTORHOME")?.precio || 0;
-    p.estacionamiento = preciosArr.find(item => item.codigo === "ING_ESTACIONAMIENTO")?.precio || 0;
+    p.adicional = parseNumber(preciosArr.find(item => item.codigo === "ING_MOTORHOME")?.precio);
+    p.adicionalL = parseNumber(preciosArr.find(item => item.codigo === "INGL_MOTORHOME")?.precio);
+    p.estacionamiento = parseNumber(preciosArr.find(item => item.codigo === "ING_ESTACIONAMIENTO")?.precio);
 
     return p;
   }, [preciosArr, isSameDay]);
+
+  const preciosVacios = useMemo(() => {
+    if (!Array.isArray(preciosArr) || preciosArr.length === 0) return true;
+    return preciosArr.every(item => !Number(item.precio));
+  }, [preciosArr]);
+
+  const mediosVacios = useMemo(() => {
+    return !Array.isArray(mediosDePago) || mediosDePago.length === 0;
+  }, [mediosDePago]);
+
+  const preciosFetchAttempted = useRef(false);
+  const mediosFetchAttempted = useRef(false);
+
+  const [hasBackup, setHasBackup] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const restoreAttempted = useRef(false);
+
+  useEffect(() => {
+    // No consultar API en esta pantalla salvo que estÃ© todo en 0/vacÃ­o
+    if (preciosVacios && !preciosFetchAttempted.current) {
+      preciosFetchAttempted.current = true;
+      setIsSyncing(true);
+      fetchPrecios().finally(() => {
+        setIsSyncing(false);
+      });
+    }
+    if (mediosVacios && !mediosFetchAttempted.current) {
+      mediosFetchAttempted.current = true;
+      setIsSyncing(true);
+      fetchMediosDePago().finally(() => {
+        setIsSyncing(false);
+      });
+    }
+  }, [preciosVacios, mediosVacios, fetchPrecios, fetchMediosDePago]);
+
+  useEffect(() => {
+    const tryRestore = async () => {
+      if (!hasBackup) return;
+      if (!preciosVacios && !mediosVacios) return;
+      if (preciosVacios && !preciosFetchAttempted.current) return;
+      if (mediosVacios && !mediosFetchAttempted.current) return;
+      if (restoreAttempted.current) return;
+      restoreAttempted.current = true;
+      setIsSyncing(true);
+      await restorePreciosFromBackup();
+      await restoreMediosDePagoFromBackup();
+      setIsSyncing(false);
+    };
+    tryRestore();
+  }, [hasBackup, preciosVacios, mediosVacios, restorePreciosFromBackup, restoreMediosDePagoFromBackup]);
+
+  useEffect(() => {
+    let mounted = true;
+    const checkBackup = async () => {
+      const [p, m] = await Promise.all([hasPreciosBackup(), hasMediosBackup()]);
+      if (mounted) setHasBackup(Boolean(p || m));
+    };
+    checkBackup();
+    return () => { mounted = false; };
+  }, [hasPreciosBackup, hasMediosBackup]);
+
+  useEffect(() => {
+    let mounted = true;
+    const readConfigOrEnv = async (key, envValue, fallback) => {
+      const [row] = await configDb.getConfigValue(key);
+      const value = row?.valor ?? envValue ?? fallback;
+      if (!row?.valor) {
+        await configDb.setConfigValue(key, String(value));
+      }
+      return String(value);
+    };
+
+    const loadPrintConfig = async () => {
+      try {
+        const [offset, queueDelay, retries, retryDelay] = await Promise.all([
+          readConfigOrEnv("print_offset_mm", process.env.EXPO_PUBLIC_PRINT_OFFSET_MM, 0),
+          readConfigOrEnv("print_queue_delay_ms", process.env.EXPO_PUBLIC_PRINT_QUEUE_DELAY_MS, 1200),
+          readConfigOrEnv("print_retries", process.env.EXPO_PUBLIC_PRINT_RETRIES, 1),
+          readConfigOrEnv("print_retry_delay_ms", process.env.EXPO_PUBLIC_PRINT_RETRY_DELAY_MS, 1500),
+        ]);
+
+        if (mounted) {
+          setPrintOffsetMm(offset);
+          setPrintQueueDelayMs(queueDelay);
+          setPrintRetries(retries);
+          setPrintRetryDelayMs(retryDelay);
+        }
+      } catch (error) {
+        // ignore
+      }
+    };
+    loadPrintConfig();
+    return () => { mounted = false; };
+  }, [configDb]);
+
+  const printQueueOptions = useMemo(() => {
+    const queueDelay = Number(printQueueDelayMs);
+    const retries = Number(printRetries);
+    const retryDelay = Number(printRetryDelayMs);
+
+    return {
+      queueDelayMs: Number.isFinite(queueDelay) ? queueDelay : 1200,
+      retries: Number.isFinite(retries) ? retries : 1,
+      retryDelayMs: Number.isFinite(retryDelay) ? retryDelay : 1500,
+    };
+  }, [printQueueDelayMs, printRetries, printRetryDelayMs]);
+
+  const handleRestoreBackup = async () => {
+    const restoredPrices = await restorePreciosFromBackup();
+    const restoredMedios = await restoreMediosDePagoFromBackup();
+
+    if (!restoredPrices && !restoredMedios) {
+      Alert.alert("AtenciÃ³n", "No hay backup para restaurar.");
+    }
+  };
 
   // --- LÓGICA DE CÁLCULOS ---
   const counts = useMemo(() => {
@@ -145,20 +264,28 @@ export default function NewTaskScreen() {
   }, [ingreso]);
 
   const subtotalGeneral = useMemo(() => {
-    // 1. Base (Personas + Lancha) multiplicado por estadía
-    const baseEstadia = CATEGORIES.reduce((acc, cat) => {
-      const v = (Number(ingreso[cat.key]) || 0) * (Number(allPrecios[cat.key]) || 0);
-      const l = (Number(ingreso[`${cat.key}L`]) || 0) * (Number(allPrecios[`${cat.key}L`]) || 0);
+    // 1. Personas por estadía
+    const baseEstadia = ["adultos", "menores", "jubilados"].reduce((acc, key) => {
+      const v = (Number(ingreso[key]) || 0) * (Number(allPrecios[key]) || 0);
+      const l = (Number(ingreso[`${key}L`]) || 0) * (Number(allPrecios[`${key}L`]) || 0);
       return acc + v + l;
     }, 0) * (Number(ingreso.estadia) || 1);
 
-    // 2. Motorhome por cantidad (visitantes + locales), multiplicado por estadía
+    // 2. Bajada de lancha se cobra una sola vez
+    const bajadaSubtotal =
+      (Number(ingreso.bajada_lancha) || 0) * (Number(allPrecios.bajada_lancha) || 0) +
+      (Number(ingreso.bajada_lanchaL) || 0) * (Number(allPrecios.bajada_lanchaL) || 0);
+
+    // 3. Motorhome se cobra una sola vez
     const motorhomeSubtotal =
-      ((Number(ingreso.adicional) || 0) * (Number(allPrecios.adicional) || 0) +
-        (Number(ingreso.adicionalL) || 0) * (Number(allPrecios.adicionalL) || 0)) *
-      (Number(ingreso.estadia) || 1);
-    const estacionamientoSubtotal = ingreso.estacionamiento ? Number(allPrecios.estacionamiento) || 0 : 0;
-    return baseEstadia + motorhomeSubtotal + estacionamientoSubtotal;
+      (Number(ingreso.adicional) || 0) * (Number(allPrecios.adicional) || 0) +
+      (Number(ingreso.adicionalL) || 0) * (Number(allPrecios.adicionalL) || 0);
+
+    // 4. Estacionamiento por estadía
+    const estacionamientoSubtotal = ingreso.estacionamiento
+      ? (Number(allPrecios.estacionamiento) || 0) * (Number(ingreso.estadia) || 1)
+      : 0;
+    return baseEstadia + bajadaSubtotal + motorhomeSubtotal + estacionamientoSubtotal;
   }, [ingreso, allPrecios]);
 
   const montoDescuento = (subtotalGeneral * (Number(ingreso.descuento) || 0)) / 100;
@@ -172,6 +299,12 @@ export default function NewTaskScreen() {
   const estadiaLabel = isSameDay ? "DÍAS" : "NOCHES";
 
   const onSave = async () => {
+    if (preciosVacios) {
+      return Alert.alert(
+        "Atención",
+        "Los precios no están cargados. Espere a que se sincronicen o use Recuperar."
+      );
+    }
     if (!ingreso.medio_de_pago) return Alert.alert("Atención", "Seleccione medio de pago");
 
     try {
@@ -180,11 +313,23 @@ export default function NewTaskScreen() {
 
       const html = generateHTML({ id: savedId ?? ingreso?.id });
       Alert.alert("Guardado", "¿Qué desea hacer?", [
-        { text: "Imprimir", onPress: async () => await Print.printAsync({ html }) },
+        {
+          text: "Imprimir", onPress: async () => {
+            try {
+              await printHtmlQueued(html, printQueueOptions);
+            } catch (error) {
+              Alert.alert("Error", "No se pudo enviar el ticket a imprimir.");
+            }
+          }
+        },
         {
           text: "Compartir", onPress: async () => {
-            const { uri } = await Print.printToFileAsync({ html });
-            await Sharing.shareAsync(uri);
+            try {
+              const { uri } = await printToFileQueued(html, printQueueOptions);
+              await Sharing.shareAsync(uri);
+            } catch (error) {
+              Alert.alert("Error", "No se pudo generar el comprobante.");
+            }
           }
         },
         { text: "Cerrar", onPress: () => router.replace("/") },
@@ -195,12 +340,34 @@ export default function NewTaskScreen() {
     }
   };
 
+  const hydratePrecio = (value, fallback) => {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric) && numeric > 0) return numeric;
+    const next = Number(fallback);
+    return Number.isFinite(next) ? next : 0;
+  };
+
   const generateHTML = (overrides = {}) => {
-    const ingresoPrint = { ...ingreso, ...overrides };
+    const ingresoBase = { ...ingreso, ...overrides };
+    const ingresoPrint = {
+      ...ingresoBase,
+      precio_adultos: hydratePrecio(ingresoBase?.precio_adultos, allPrecios.adultos),
+      precio_menores: hydratePrecio(ingresoBase?.precio_menores, allPrecios.menores),
+      precio_jubilados: hydratePrecio(ingresoBase?.precio_jubilados, allPrecios.jubilados),
+      precio_bajada_lancha: hydratePrecio(ingresoBase?.precio_bajada_lancha, allPrecios.bajada_lancha),
+      precio_adultosL: hydratePrecio(ingresoBase?.precio_adultosL, allPrecios.adultosL),
+      precio_menoresL: hydratePrecio(ingresoBase?.precio_menoresL, allPrecios.menoresL),
+      precio_jubiladosL: hydratePrecio(ingresoBase?.precio_jubiladosL, allPrecios.jubiladosL),
+      precio_bajada_lanchaL: hydratePrecio(ingresoBase?.precio_bajada_lanchaL, allPrecios.bajada_lanchaL),
+      precio_adicional: hydratePrecio(ingresoBase?.precio_adicional, allPrecios.adicional),
+      precio_adicionalL: hydratePrecio(ingresoBase?.precio_adicionalL, allPrecios.adicionalL),
+      precio_estacionamiento: hydratePrecio(ingresoBase?.precio_estacionamiento, allPrecios.estacionamiento),
+    };
     const estacionamientoPrecio = Number(ingresoPrint?.precio_estacionamiento ?? allPrecios.estacionamiento ?? 0);
     return buildIngresoHtml(ingresoPrint, {
       totalOverride: totalFinal,
       estacionamientoPrecio,
+      printOffsetMm,
     });
   };
 
@@ -234,10 +401,18 @@ export default function NewTaskScreen() {
     <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
       <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
         <ScrollView style={styles.container}>
-          <TouchableOpacity onPress={handleBackToInfo} style={styles.backButton}>
-            <Ionicons name="chevron-back-circle-outline" size={22} color={Colors.DBLUE} />
-            <Text style={styles.backButtonText}>ATRAS</Text>
-          </TouchableOpacity>
+          <View style={styles.headerRow}>
+            <TouchableOpacity onPress={handleBackToInfo} style={styles.backButton}>
+              <Ionicons name="chevron-back-circle-outline" size={22} color={Colors.DBLUE} />
+              <Text style={styles.backButtonText}>ATRAS</Text>
+            </TouchableOpacity>
+            {isSyncing && (
+              <View style={styles.syncBadge}>
+                <ActivityIndicator size="small" color="#fff" />
+                <Text style={styles.syncBadgeText}>Sincronizando...</Text>
+              </View>
+            )}
+          </View>
           <View style={styles.row}>
             {renderCounterColumn(false)}
             {renderCounterColumn(true)}
@@ -409,38 +584,41 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8f9fa', padding: 10 },
   row: { flexDirection: "row", justifyContent: "space-between" },
   column: { flex: 1, marginHorizontal: 4 },
-  columnHeader: { textAlign: 'center', fontSize: 13, fontWeight: 'bold', color: Colors.DBLUE, marginBottom: 8 },
+  columnHeader: { textAlign: 'center', fontSize: 15, fontWeight: 'bold', color: Colors.DBLUE, marginBottom: 8 },
   card: { backgroundColor: 'white', borderRadius: 12, padding: 10, marginBottom: 12, elevation: 3 },
   cardVisitantes: { backgroundColor: '#e9f7e5', borderLeftWidth: 3, borderLeftColor: Colors.GREEN },
-  cardLabel: { fontSize: 10, color: '#888', fontWeight: 'bold', textTransform: 'uppercase' },
-  subtotalText: { fontSize: 14, fontWeight: 'bold', color: '#333', marginVertical: 4 },
+  cardLabel: { fontSize: 12, color: '#888', fontWeight: 'bold', textTransform: 'uppercase' },
+  subtotalText: { fontSize: 16, fontWeight: 'bold', color: '#333', marginVertical: 4 },
   controls: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  countText: { fontSize: 18, fontWeight: 'bold', minWidth: 25, textAlign: 'center' },
+  countText: { fontSize: 20, fontWeight: 'bold', minWidth: 25, textAlign: 'center' },
   summaryBox: { flexDirection: 'row', justifyContent: 'space-around', padding: 12, backgroundColor: '#fff', borderRadius: 10, marginVertical: 8, borderWidth: 1, borderColor: '#eee' },
-  summaryText: { fontSize: 14, color: '#555' },
+  summaryText: { fontSize: 16, color: '#555' },
   bold: { fontWeight: 'bold', color: Colors.DBLUE },
   section: { marginVertical: 8 },
-  label: { fontSize: 13, fontWeight: 'bold', color: '#444', marginBottom: 5 },
-  input: { backgroundColor: 'white', borderRadius: 10, padding: 12, borderWidth: 1, borderColor: '#ddd', fontSize: 16 },
+  label: { fontSize: 15, fontWeight: 'bold', color: '#444', marginBottom: 5 },
+  input: { backgroundColor: 'white', borderRadius: 10, padding: 12, borderWidth: 1, borderColor: '#ddd', fontSize: 18 },
   pickerContainer: { backgroundColor: 'white', borderRadius: 10, borderWidth: 1, borderColor: '#ddd', overflow: 'hidden' },
   totalBox: { backgroundColor: '#fff', padding: 15, borderRadius: 15, marginVertical: 15, borderWidth: 1, borderColor: '#dbeafe' },
   totalRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 5 },
-  totalLabel: { fontSize: 14, color: '#666' },
-  totalValue: { fontSize: 14, fontWeight: 'bold' },
-  grandTotalLabel: { fontSize: 16, fontWeight: 'bold', color: Colors.DBLUE },
-  grandTotalValue: { fontSize: 22, fontWeight: 'bold', color: Colors.DBLUE },
+  totalLabel: { fontSize: 16, color: '#666' },
+  totalValue: { fontSize: 16, fontWeight: 'bold' },
+  grandTotalLabel: { fontSize: 18, fontWeight: 'bold', color: Colors.DBLUE },
+  grandTotalValue: { fontSize: 24, fontWeight: 'bold', color: Colors.DBLUE },
   estacionamientoCard: { backgroundColor: '#fff', borderRadius: 12, padding: 10, marginTop: 6, borderWidth: 1, borderColor: '#eee' },
   estacionamientoHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  estacionamientoLabel: { fontSize: 12, fontWeight: 'bold', color: '#444' },
-  estacionamientoPrice: { fontSize: 12, fontWeight: 'bold', color: '#333' },
+  estacionamientoLabel: { fontSize: 14, fontWeight: 'bold', color: '#444' },
+  estacionamientoPrice: { fontSize: 14, fontWeight: 'bold', color: '#333' },
   estacionamientoCheckbox: { padding: 6, borderRadius: 5 },
   estacionamientoOptions: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 },
   estacionamientoOption: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  estacionamientoOptionLabel: { fontSize: 12, color: '#555' },
+  estacionamientoOptionLabel: { fontSize: 14, color: '#555' },
   btnSave: { flexDirection: 'row', height: 60, borderRadius: 15, alignItems: 'center', justifyContent: 'center', marginVertical: 10 },
-  btnSaveText: { color: 'white', fontSize: 16, fontWeight: 'bold', marginLeft: 10 },
-  backButton: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 },
-  backButtonText: { color: Colors.DBLUE, fontSize: 14, fontWeight: 'bold' }
+  btnSaveText: { color: 'white', fontSize: 18, fontWeight: 'bold', marginLeft: 10 },
+  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
+  backButton: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  backButtonText: { color: Colors.DBLUE, fontSize: 16, fontWeight: 'bold' },
+  syncBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, height: 32, borderRadius: 10, backgroundColor: "#4A90E2" },
+  syncBadgeText: { color: "white", fontSize: 12, fontWeight: "bold" }
 });
 
 

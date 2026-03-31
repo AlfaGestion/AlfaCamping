@@ -20,11 +20,21 @@ export default function SendPending() {
   const ingresoDb = useIngresoDb();
   const clienteDb = useClienteDb();
   const netInfo = useNetInfo();
-  const { sendDataToApi } = useApi();
+  const { sendDataToApi, fetchDataFromApi } = useApi();
 
   const [showLoaders, setShowLoaders] = useState(false);
   const [showLoaderIngresos, setShowLoaderIngresos] = useState(true);
-  // const [showLoaderClientesIngresos, setShowLoaderClientesIngresos] = useState(true);
+  const [showLoaderClientesIngresos, setShowLoaderClientesIngresos] = useState(true);
+
+  const readField = (obj, ...keys) => {
+    for (const key of keys) {
+      const value = obj?.[key];
+      if (value !== undefined && value !== null && value !== "") {
+        return value;
+      }
+    }
+    return undefined;
+  };
 
   const sendIngresos = async () => {
     let ingresos = await ingresoDb.getAll();
@@ -155,101 +165,78 @@ export default function SendPending() {
     setShowLoaderIngresos(false);
   };
 
-  // const sendClientesIngresos = async () => {
-  //   let clientesIngresos = await clienteDb.getAll();
-  //   let clientesIngresosSend = [];
+  const syncClientesIngresos = async () => {
+    setShowLoaderClientesIngresos(true);
 
-  //   for (const item of clientesIngresos) {
-  //     clientesIngresosSend.push({
-  //       dni: item?.dni,
-  //       apellido_nombre: item?.apellido_nombre,
-  //       parcela: item?.parcela,
-  //       nacionalidad: item?.nacionalidad,
-  //       direccion: item?.direccion,
-  //       ciudad: item?.ciudad,
-  //       patente: item?.patente,
-  //       modelo_vehiculo: item?.modelo_vehiculo,
+    try {
+      const endpoints = ["ingresos/clientes", "ObtenerClientes"];
+      let response = null;
 
-  //       trekking: item?.trekking,
-  //       kayak: item?.kayak,
-  //       embarcado: item?.embarcado,
-  //       amarre: item?.amarre,
+      for (const endpoint of endpoints) {
+        response = await fetchDataFromApi(endpoint);
+        if (response && !response?.error) break;
+      }
 
-  //       bajada_lancha: item?.bajada_lancha,
-  //       adultos: item?.adultos,
-  //       menores: item?.menores,
-  //       jubilados: item?.jubilados,
-  //     });
-  //   }
+      if (!response || response?.error) {
+        Toast.show({
+          type: "error",
+          text1: "Error al sincronizar clientes",
+          text2: `${response?.message ?? "Respuesta inválida"}`,
+          position: "bottom",
+          bottomOffset: 130,
+          autoHide: false,
+          text1Style: { fontFamily: "Poppins-Bold", fontSize: 15 },
+          text2Style: { fontFamily: "Poppins-Medium", fontSize: 13 },
+        });
+        return;
+      }
 
-  //   if (clientesIngresosSend.length > 0) {
-  //     try {
-  //       const response = await sendDataToApi("ingresos/clientes", JSON.stringify(clientesIngresosSend));
+      const payload = response?.data ?? response;
+      const clientes = Array.isArray(payload) ? payload : (payload?.data ?? []);
 
-  //       if (!response.error) {
-  //         setShowLoaderClientesIngresos(false);
-  //         try {
-  //           await clienteDb.deleteAll();
-  //           return false;
-  //         } catch (e) {
-  //           Toast.show({
-  //             type: "error",
-  //             text1: "Error al eliminar los clientes de ingresos enviados",
-  //             text2: `No envie nuevamente por que se duplicarían: ${e}`,
-  //             position: "bottom",
-  //             bottomOffset: 130,
-  //             autoHide: false,
-  //             text1Style: { fontFamily: "Poppins-Bold", fontSize: 15 },
-  //             text2Style: { fontFamily: "Poppins-Medium", fontSize: 13 },
-  //           })
-  //           return true;
-  //         }
-  //       } else {
-  //         Toast.show({
-  //           type: "error",
-  //           text1: "Error al enviar los clientes de ingresos",
-  //           text2: `${response.message}`,
-  //           position: "bottom",
-  //           bottomOffset: 130,
-  //           autoHide: false,
-  //           text1Style: { fontFamily: "Poppins-Bold", fontSize: 15 },
-  //           text2Style: { fontFamily: "Poppins-Medium", fontSize: 13 },
-  //         })
-  //         return true;
-  //       }
-  //     } catch (error) {
-  //       Toast.show({
-  //         type: "error",
-  //         text1: "Error al enviar los clientes de ingresos",
-  //         text2: `${error}`,
-  //         position: "bottom",
-  //         bottomOffset: 130,
-  //         autoHide: false,
-  //         text1Style: { fontFamily: "Poppins-Bold", fontSize: 15 },
-  //         text2Style: { fontFamily: "Poppins-Medium", fontSize: 13 },
-  //       })
-  //       return true;
-  //     }
-  //   } else {
-  //     setShowLoaderClientesIngresos(false);
-  //     return false;
-  //   }
-  // };
+      if (!Array.isArray(clientes) || clientes.length === 0) {
+        setShowLoaderClientesIngresos(false);
+        return;
+      }
+
+      await clienteDb.deleteAll();
+
+      for (const item of clientes) {
+        const dni = readField(item, "dni", "Dni");
+        if (!dni) continue;
+
+        await clienteDb.create({
+          apellido_nombre: readField(item, "apellido_nombre", "ApellidoNombre") || "",
+          dni: dni.toString(),
+          nacionalidad: readField(item, "nacionalidad", "Nacionalidad") || "",
+          direccion: readField(item, "direccion", "Direccion") || "",
+          modelo_vehiculo: readField(item, "modelo_vehiculo", "ModeloVehiculo") || "",
+          ciudad: readField(item, "ciudad", "Ciudad") || "",
+          patente: readField(item, "patente", "Patente") || "",
+          telefono: readField(item, "telefono", "Telefono") || "",
+        });
+      }
+    } catch (error) {
+      Toast.show({
+        type: "error",
+        text1: "Error al sincronizar clientes",
+        text2: `${error}`,
+        position: "bottom",
+        bottomOffset: 130,
+        autoHide: false,
+        text1Style: { fontFamily: "Poppins-Bold", fontSize: 15 },
+        text2Style: { fontFamily: "Poppins-Medium", fontSize: 13 },
+      });
+    } finally {
+      setShowLoaderClientesIngresos(false);
+    }
+  };
 
   const handleSendPending = async () => {
     setShowLoaders(true);
 
     try {
-      // error = await sendClientesIngresos();
-      // if (error) {
-      //   return;
-      // }
-
-      // error = await sendIngresos();
-      // if (error) {
-      //   return;
-      // }
-
+      await syncClientesIngresos();
       await sendIngresos();
     } catch (e) {
       console.error(e);
@@ -300,7 +287,7 @@ export default function SendPending() {
           {showLoaders && (
             <View>
               <SyncItem showLoader={showLoaderIngresos} text="Ingresos" />
-              <SyncItem showLoader={showLoaderIngresos} text="Clientes de Ingresos" />
+              <SyncItem showLoader={showLoaderClientesIngresos} text="Clientes de Ingresos" />
             </View>
           )}
         </View>

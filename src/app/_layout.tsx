@@ -63,6 +63,7 @@ export default function Layout() {
           >
             <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
             <Stack.Screen name="ingresos" options={{ headerShown: false }} />
+            <Stack.Screen name="printConfig" options={{ title: "Configuracion de impresion" }} />
           </Stack>
         </ConfigContextProvider>
       </IngresoContextProvider>

@@ -1,6 +1,6 @@
 
-import { useEffect, useContext } from "react"
-import { View, StyleSheet, Text, TextInput, ActivityIndicator, ScrollView, TouchableOpacity, Alert } from "react-native"
+import { useEffect, useContext, useState } from "react"
+import { View, StyleSheet, Text, TextInput, ActivityIndicator, ScrollView, TouchableOpacity, Alert, Modal } from "react-native"
 import { SafeAreaView } from "react-native-safe-area-context"
 import Constants from "expo-constants"
 import { Ionicons } from "@expo/vector-icons"
@@ -14,6 +14,7 @@ import { useMediosDePagoDb } from "@/db/useMediosDePagoDb"
 import { useIngresoDb } from "@/db/useIngresoDb"
 import { useClienteDb } from "@/db/useClienteDb"
 import { useNetInfo } from "@react-native-community/netinfo";
+import { useApi } from "@/hooks/useApi"
 
 import { newTaskStyles } from "@/styles/TaskStyle"
 import { newOrderStyles } from "@/styles/OrderStyle"
@@ -22,11 +23,29 @@ import Toast from "react-native-toast-message"
 export default function Settings() {
   const router = useRouter()
   const netInfo = useNetInfo();
-  const appVersion = Constants.expoConfig?.version ?? Constants.manifest?.version ?? "dev";
+  const appVersion =
+    process.env.EXPO_PUBLIC_APP_LABEL_VERSION
+    ?? Constants.expoConfig?.version
+    ?? Constants.manifest?.version
+    ?? "dev";
+  const [showResetModal, setShowResetModal] = useState(false)
+  const [resetPassword, setResetPassword] = useState("")
+  const [resetError, setResetError] = useState("")
+  const [showSyncModal, setShowSyncModal] = useState(false)
+  const [syncDone, setSyncDone] = useState(false)
+  const [syncSteps, setSyncSteps] = useState({
+    config: "pending",
+    precios: "pending",
+    medios: "pending",
+    clientes: "pending",
+  })
+  const [preciosEnCero, setPreciosEnCero] = useState(false)
+  const [hasBackup, setHasBackup] = useState(false)
 
   const {
     isLoading: isLoadingIngresos,
-    fetchPrecios, fetchMediosDePago, list: listIngresos,
+    fetchPrecios, fetchMediosDePago, list: listIngresos, setPrecios, setMediosDePago,
+    restorePreciosFromBackup, restoreMediosDePagoFromBackup, hasPreciosBackup, hasMediosBackup,
   } = useContext(IngresoContext);
 
   const {
@@ -40,6 +59,7 @@ export default function Settings() {
     customerId, setCustomerId,
     databaseId, setDatabaseId,
     printerIp, setPrinterIp,
+    printOffsetMm, setPrintOffsetMm,
 
     apiRef, userRef, passRef, customerRef, dbRef,
     apiRefresh, userRefresh, passRefresh, customerRefresh, dbRefresh,
@@ -51,21 +71,159 @@ export default function Settings() {
   const mediosDb = useMediosDePagoDb()
   const ingresoDb = useIngresoDb()
   const clienteDb = useClienteDb()
+  const { fetchDataFromApi } = useApi()
 
-  const list = async () => {
-    setIsLoading(true)
+  const readField = (obj, ...keys) => {
+    for (const key of keys) {
+      const value = obj?.[key]
+      if (value !== undefined && value !== null && value !== "") {
+        return value
+      }
+    }
+    return undefined
+  }
+
+  const syncClientesIngresos = async () => {
+    const endpoints = ["ingresos/clientes", "ObtenerClientes"]
+    let response = null
+
+    for (const endpoint of endpoints) {
+      response = await fetchDataFromApi(endpoint)
+      if (response && !response?.error) break
+    }
+
+    if (!response || response?.error) {
+      throw new Error(response?.message ?? "Respuesta invÃ¡lida")
+    }
+
+    const payload = response?.data ?? response
+    const clientes = Array.isArray(payload) ? payload : (payload?.data ?? [])
+
+    if (!Array.isArray(clientes) || clientes.length === 0) {
+      return
+    }
+
+    await clienteDb.deleteAll()
+
+    for (const item of clientes) {
+      const dni = readField(item, "dni", "Dni")
+      if (!dni) continue
+
+      await clienteDb.create({
+        apellido_nombre: readField(item, "apellido_nombre", "ApellidoNombre") || "",
+        dni: dni.toString(),
+        nacionalidad: readField(item, "nacionalidad", "Nacionalidad") || "",
+        direccion: readField(item, "direccion", "Direccion") || "",
+        modelo_vehiculo: readField(item, "modelo_vehiculo", "ModeloVehiculo") || "",
+        ciudad: readField(item, "ciudad", "Ciudad") || "",
+        patente: readField(item, "patente", "Patente") || "",
+        telefono: readField(item, "telefono", "Telefono") || "",
+      })
+    }
+  }
+
+  const list = async ({ showSync = false } = {}) => {
+    if (showSync) {
+      setSyncSteps({ config: "pending", precios: "pending", medios: "pending", clientes: "pending" })
+      setSyncDone(false)
+      setShowSyncModal(true)
+    } else {
+      setIsLoading(true)
+    }
 
     try {
+      if (showSync) setSyncSteps(prev => ({ ...prev, config: "loading" }))
       const response = await configDb.fetchConfig()
       setConfig(response)
-      fetchPrecios()
-      fetchMediosDePago()
+      console.info("CONFIG_KEYS:", (response || []).map(r => r.clave))
+      if (showSync) setSyncSteps(prev => ({ ...prev, config: "done" }))
+
+      if (showSync) {
+        await configDb.setConfigValue("TOKEN", "")
+
+        setSyncSteps(prev => ({ ...prev, precios: "loading" }))
+        try {
+          const preciosOk = await fetchPrecios()
+          if (!preciosOk) {
+            setSyncSteps(prev => ({ ...prev, precios: "error", medios: "error", clientes: "error" }))
+            setSyncDone(true)
+            return
+          }
+          setSyncSteps(prev => ({ ...prev, precios: "done" }))
+        } catch (e) {
+          console.error(e)
+          setSyncSteps(prev => ({ ...prev, precios: "error", medios: "error", clientes: "error" }))
+          setSyncDone(true)
+          return
+        }
+
+        setSyncSteps(prev => ({ ...prev, medios: "loading" }))
+        try {
+          const mediosOk = await fetchMediosDePago()
+          if (!mediosOk) {
+            setSyncSteps(prev => ({ ...prev, medios: "error", clientes: "error" }))
+            setSyncDone(true)
+            return
+          }
+          setSyncSteps(prev => ({ ...prev, medios: "done" }))
+        } catch (e) {
+          console.error(e)
+          setSyncSteps(prev => ({ ...prev, medios: "error", clientes: "error" }))
+          setSyncDone(true)
+          return
+        }
+
+        setSyncSteps(prev => ({ ...prev, clientes: "loading" }))
+        try {
+          await syncClientesIngresos()
+          setSyncSteps(prev => ({ ...prev, clientes: "done" }))
+        } catch (e) {
+          console.error(e)
+          setSyncSteps(prev => ({ ...prev, clientes: "error" }))
+        }
+      }
       // console.log(response)
     } catch (error) {
       console.error(error)
-      Alert.alert('Error', 'No se ha podido obtener la configuración.')
+      Alert.alert('Error', 'No se ha podido obtener la configuraciÃ³n.')
+      if (showSync) {
+        setSyncSteps(prev => ({
+          ...prev,
+          config: prev.config === "loading" ? "error" : prev.config,
+          precios: prev.precios === "loading" ? "error" : prev.precios,
+          medios: prev.medios === "loading" ? "error" : prev.medios,
+          clientes: prev.clientes === "loading" ? "error" : prev.clientes,
+        }))
+      }
     } finally {
-      setIsLoading(false)
+      if (showSync) {
+        setSyncDone(true)
+      } else {
+        setIsLoading(false)
+      }
+    }
+  }
+
+  const handleRestoreBackup = async () => {
+    const [hasP, hasM] = await Promise.all([hasPreciosBackup(), hasMediosBackup()]);
+    if (!hasP && !hasM) {
+      return Alert.alert("Atención", "No hay backup para restaurar.");
+    }
+
+    const restoredPrices = await restorePreciosFromBackup();
+    const restoredMedios = await restoreMediosDePagoFromBackup();
+    if (restoredPrices || restoredMedios) {
+      Toast.show({
+        type: "success",
+        text1: "Backup restaurado",
+        text2: "Se recuperaron precios y medios de pago.",
+        visibilityTime: 1777,
+        position: "bottom",
+        bottomOffset: 120,
+        text1Style: { fontFamily: "Poppins-Bold", fontSize: 15 },
+        text2Style: { fontFamily: "Poppins-Regular", fontSize: 13 },
+        swipeable: true,
+      })
     }
   }
 
@@ -85,6 +243,8 @@ export default function Settings() {
       await configDb.createOrUpdate({ clave: 'customer_id', valor: customerId })
       await configDb.createOrUpdate({ clave: 'database_id', valor: databaseId })
       await configDb.createOrUpdate({ clave: 'cfg_impresora_barrera_1', valor: printerIp })
+      await configDb.createOrUpdate({ clave: 'print_offset_mm', valor: printOffsetMm })
+      await configDb.setConfigValue("TOKEN", "")
 
       list()
 
@@ -123,8 +283,11 @@ export default function Settings() {
               await clienteDb.deleteAll()
               await mediosDb.deleteAll()
               await preciosDb.deleteAll()
+              setPrecios([])
+              setMediosDePago([])
 
               if (netInfo.isConnected) {
+                await configDb.setConfigValue("TOKEN", "")
                 await fetchPrecios()
                 await fetchMediosDePago()
               }
@@ -155,6 +318,29 @@ export default function Settings() {
     )
   }
 
+  const handleResetRequest = () => {
+    setResetPassword("")
+    setResetError("")
+    setShowResetModal(true)
+  }
+
+  const handleResetConfirm = async () => {
+    try {
+      const [row] = await configDb.getConfigValue("ING_CLAVEVACIARBASE")
+      const expected = (row?.valor ?? "Alfa@").toString().trim()
+      console.info("ING_CLAVEVACIARBASE:", expected ? "<set>" : "<empty>", expected)
+      if (resetPassword !== expected) {
+        setResetError("Contraseña incorrecta.")
+        return
+      }
+      setShowResetModal(false)
+      handleResetDb()
+    } catch (error) {
+      console.error(error)
+      setResetError("No se pudo validar la contraseña.")
+    }
+  }
+
   const fillConfig = () => {
     // console.log('FILLING CONFIG WITH', config)
 
@@ -164,6 +350,7 @@ export default function Settings() {
     const customerId = config.find(item => item.clave === "customer_id")?.valor
     const databaseId = config.find(item => item.clave === "database_id")?.valor
     const printerIp = config.find(item => item.clave === "cfg_impresora_barrera_1")?.valor
+    const printOffsetMm = config.find(item => item.clave === "print_offset_mm")?.valor
 
     setApiUri(apiUri)
     setUsername(username)
@@ -171,6 +358,7 @@ export default function Settings() {
     setCustomerId(customerId)
     setDatabaseId(databaseId)
     setPrinterIp(printerIp)
+    setPrintOffsetMm(printOffsetMm ?? String(process.env.EXPO_PUBLIC_PRINT_OFFSET_MM ?? 0))
   }
 
   useEffect(() => {
@@ -180,6 +368,29 @@ export default function Settings() {
   useEffect(() => {
     list()
   }, [])
+
+  useEffect(() => {
+    let mounted = true
+    const checkPrecios = async () => {
+      const all = await preciosDb.getAll()
+      const enCero = !all || all.length === 0 || all.every(item => !Number(item.precio))
+      if (mounted) setPreciosEnCero(enCero)
+    }
+    checkPrecios()
+    return () => { mounted = false }
+  }, [preciosDb])
+
+  useEffect(() => {
+    let mounted = true
+    const checkBackup = async () => {
+      const [hasP, hasM] = await Promise.all([hasPreciosBackup(), hasMediosBackup()])
+      if (mounted) setHasBackup(Boolean(hasP || hasM))
+    }
+    checkBackup()
+    return () => { mounted = false }
+  }, [hasPreciosBackup, hasMediosBackup])
+
+  const hasSyncError = Object.values(syncSteps).some((status) => status === "error")
 
   return (
     <>
@@ -317,7 +528,7 @@ export default function Settings() {
               </TouchableOpacity>
 
               <TouchableOpacity
-                onPress={() => { list() }}
+                onPress={() => { list({ showSync: true }) }}
                 style={[
                   { ...newOrderStyles.btnOptions, ...newOrderStyles.btnSave, ...newOrderStyles.btnData },
                   { width: "100%", marginBottom: 10 }
@@ -325,6 +536,37 @@ export default function Settings() {
               >
                 <Ionicons name="download-outline" color="white" size={18} />
                 <Text style={[newOrderStyles.textBtnOptions]}>Traer últimos datos</Text>
+              </TouchableOpacity>
+
+              {preciosEnCero && (
+                <Text style={[newTaskStyles.label, { marginBottom: 6 }]}>
+                  {hasBackup
+                    ? "Se encontraron precios en 0. Podés restaurar un backup."
+                    : "Se encontraron precios en 0. Debe sincronizar."}
+                </Text>
+              )}
+              {preciosEnCero && hasBackup && (
+                <TouchableOpacity
+                  onPress={handleRestoreBackup}
+                  style={[
+                    { ...newOrderStyles.btnOptions, backgroundColor: "#4A90E2" },
+                    { width: "100%", marginBottom: 10 }
+                  ]}
+                >
+                  <Ionicons name="refresh" color="white" size={18} />
+                  <Text style={[newOrderStyles.textBtnOptions]}>Restaurar backup</Text>
+                </TouchableOpacity>
+              )}
+
+              <TouchableOpacity
+                onPress={() => router.push("/printConfig")}
+                style={[
+                  { ...newOrderStyles.btnOptions, backgroundColor: '#6B7280' },
+                  { width: "100%", marginBottom: 10 }
+                ]}
+              >
+                <Ionicons name="print-outline" color="white" size={18} />
+                <Text style={[newOrderStyles.textBtnOptions]}>Configuracion de impresion</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -339,7 +581,7 @@ export default function Settings() {
               </TouchableOpacity>
 
               <TouchableOpacity
-                onPress={handleResetDb}
+                onPress={handleResetRequest}
                 style={[
                   { ...newOrderStyles.btnOptions, ...newOrderStyles.btnCancel },
                   { width: "100%", marginBottom: 30 }
@@ -350,12 +592,146 @@ export default function Settings() {
               </TouchableOpacity>
 
               <View style={styles.versionContainer}>
-                <Text style={styles.versionText}>v{appVersion}</Text>
+                <Text style={styles.versionText}>Version: {appVersion}</Text>
               </View>
             </ScrollView>
           </View>
         </SafeAreaView>
       }
+
+      <Modal
+        transparent
+        visible={showSyncModal}
+        animationType="fade"
+        onRequestClose={() => {
+          if (syncDone) setShowSyncModal(false)
+        }}
+      >
+        <View style={styles.syncBackdrop}>
+          <View style={styles.syncCard}>
+            <Text style={styles.syncTitle}>Sincronizando datos</Text>
+            <Text style={styles.syncSubtitle}>Este proceso puede tardar unos segundos.</Text>
+
+            <View style={styles.syncRow}>
+              <View style={styles.syncIcon}>
+                {syncSteps.config === "loading" ? (
+                  <ActivityIndicator size="small" color="#286A73" />
+                ) : syncSteps.config === "done" ? (
+                  <Ionicons name="checkmark-circle" size={18} color="#2E7D32" />
+                ) : syncSteps.config === "error" ? (
+                  <Ionicons name="close-circle" size={18} color="#D64545" />
+                ) : (
+                  <Ionicons name="ellipse-outline" size={16} color="#999" />
+                )}
+              </View>
+              <Text style={styles.syncText}>Configuración</Text>
+              <Text style={styles.syncStatus}>
+                {syncSteps.config === "loading" ? "Sincronizando..." : syncSteps.config === "done" ? "Listo" : syncSteps.config === "error" ? "Error" : "Pendiente"}
+              </Text>
+            </View>
+
+            <View style={styles.syncRow}>
+              <View style={styles.syncIcon}>
+                {syncSteps.precios === "loading" ? (
+                  <ActivityIndicator size="small" color="#286A73" />
+                ) : syncSteps.precios === "done" ? (
+                  <Ionicons name="checkmark-circle" size={18} color="#2E7D32" />
+                ) : syncSteps.precios === "error" ? (
+                  <Ionicons name="close-circle" size={18} color="#D64545" />
+                ) : (
+                  <Ionicons name="ellipse-outline" size={16} color="#999" />
+                )}
+              </View>
+              <Text style={styles.syncText}>Precios</Text>
+              <Text style={styles.syncStatus}>
+                {syncSteps.precios === "loading" ? "Sincronizando..." : syncSteps.precios === "done" ? "Listo" : syncSteps.precios === "error" ? "Error" : "Pendiente"}
+              </Text>
+            </View>
+
+            <View style={styles.syncRow}>
+              <View style={styles.syncIcon}>
+                {syncSteps.medios === "loading" ? (
+                  <ActivityIndicator size="small" color="#286A73" />
+                ) : syncSteps.medios === "done" ? (
+                  <Ionicons name="checkmark-circle" size={18} color="#2E7D32" />
+                ) : syncSteps.medios === "error" ? (
+                  <Ionicons name="close-circle" size={18} color="#D64545" />
+                ) : (
+                  <Ionicons name="ellipse-outline" size={16} color="#999" />
+                )}
+              </View>
+              <Text style={styles.syncText}>Medios de pago</Text>
+              <Text style={styles.syncStatus}>
+                {syncSteps.medios === "loading" ? "Sincronizando..." : syncSteps.medios === "done" ? "Listo" : syncSteps.medios === "error" ? "Error" : "Pendiente"}
+              </Text>
+            </View>
+
+            <View style={styles.syncRow}>
+              <View style={styles.syncIcon}>
+                {syncSteps.clientes === "loading" ? (
+                  <ActivityIndicator size="small" color="#286A73" />
+                ) : syncSteps.clientes === "done" ? (
+                  <Ionicons name="checkmark-circle" size={18} color="#2E7D32" />
+                ) : syncSteps.clientes === "error" ? (
+                  <Ionicons name="close-circle" size={18} color="#D64545" />
+                ) : (
+                  <Ionicons name="ellipse-outline" size={16} color="#999" />
+                )}
+              </View>
+              <Text style={styles.syncText}>Clientes</Text>
+              <Text style={styles.syncStatus}>
+                {syncSteps.clientes === "loading" ? "Sincronizando..." : syncSteps.clientes === "done" ? "Listo" : syncSteps.clientes === "error" ? "Error" : "Pendiente"}
+              </Text>
+            </View>
+
+            {(syncDone || hasSyncError) && (
+              <TouchableOpacity
+                style={styles.syncCloseButton}
+                onPress={() => setShowSyncModal(false)}
+              >
+                <Text style={styles.syncCloseText}>Cerrar</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        transparent
+        visible={showResetModal}
+        animationType="fade"
+        onRequestClose={() => setShowResetModal(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Confirmar eliminación</Text>
+            <Text style={styles.modalText}>Ingrese la contraseña para vaciar la base local.</Text>
+            <TextInput
+              value={resetPassword}
+              onChangeText={setResetPassword}
+              placeholder="Contraseña"
+              secureTextEntry
+              style={styles.modalInput}
+              autoFocus
+            />
+            {resetError ? <Text style={styles.modalError}>{resetError}</Text> : null}
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                onPress={() => setShowResetModal(false)}
+                style={[newOrderStyles.btnOptions, styles.modalBtnCancel]}
+              >
+                <Text style={newOrderStyles.textBtnOptions}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleResetConfirm}
+                style={[newOrderStyles.btnOptions, styles.modalBtnConfirm]}
+              >
+                <Text style={newOrderStyles.textBtnOptions}>Confirmar</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </>
   )
 }
@@ -370,5 +746,114 @@ const styles = StyleSheet.create({
     height: '100%',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  syncBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+  syncCard: {
+    width: "100%",
+    backgroundColor: "white",
+    borderRadius: 12,
+    padding: 20,
+  },
+  syncTitle: {
+    fontFamily: "Poppins-Bold",
+    fontSize: 16,
+    marginBottom: 4,
+  },
+  syncSubtitle: {
+    fontFamily: "Poppins-Regular",
+    fontSize: 12,
+    color: "#666",
+    marginBottom: 12,
+  },
+  syncRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: "#eee",
+  },
+  syncIcon: {
+    width: 26,
+    alignItems: "center",
+    marginRight: 8,
+  },
+  syncText: {
+    flex: 1,
+    fontFamily: "Poppins-Regular",
+    fontSize: 13,
+    color: "#222",
+  },
+  syncStatus: {
+    fontFamily: "Poppins-Regular",
+    fontSize: 12,
+    color: "#666",
+  },
+  syncCloseButton: {
+    marginTop: 14,
+    backgroundColor: "#284473",
+    borderRadius: 8,
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  syncCloseText: {
+    color: "#fff",
+    fontFamily: "Poppins-Bold",
+    fontSize: 13,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+  modalCard: {
+    width: "100%",
+    backgroundColor: "white",
+    borderRadius: 12,
+    padding: 20,
+  },
+  modalTitle: {
+    fontFamily: "Poppins-Bold",
+    fontSize: 16,
+    marginBottom: 8,
+  },
+  modalText: {
+    fontFamily: "Poppins-Regular",
+    fontSize: 13,
+    marginBottom: 10,
+  },
+  modalInput: {
+    borderWidth: 1,
+    borderColor: "#ddd",
+    borderRadius: 8,
+    padding: 10,
+    fontFamily: "Poppins-Regular",
+  },
+  modalError: {
+    color: "red",
+    marginTop: 8,
+    fontFamily: "Poppins-Regular",
+  },
+  modalActions: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 14,
+  },
+  modalBtnCancel: {
+    flex: 1,
+    marginRight: 8,
+    backgroundColor: "#999",
+  },
+  modalBtnConfirm: {
+    flex: 1,
+    marginLeft: 8,
+    backgroundColor: "#D64545",
   },
 })
